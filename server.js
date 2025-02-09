@@ -8,7 +8,7 @@ const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 1000;
 
 // Store all connected socket IDs in a Set
 const connectedSocketIds = new Set();
@@ -20,7 +20,7 @@ const authController = require("./controllers/authController"); // 🔹 Import a
 // ✅ Enable CORS & JSON parsing
 app.use(
   cors({
-    origin: ["*", "http://localhost:3000"],
+    origin: ["*", "https://minitrade.vercel.app", "http://localhost:3000"],
     methods: ["GET", "POST"],
     credentials: true, // Allow cookies, authorization headers
   })
@@ -30,7 +30,7 @@ app.use(express.json());
 // ✅ WebSocket Server
 const io = new Server(server, {
   cors: {
-    origin: ["*", "http://localhost:3000"],
+    origin: ["*", "https://minitrade.vercel.app", "http://localhost:3000"],
     methods: ["GET", "POST"],
     credentials: true, // Allow credentials (cookies, authorization headers, etc.)
   },
