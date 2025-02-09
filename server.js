@@ -7,7 +7,7 @@ const axios = require("axios");
 const path = require("path");
 
 const chromium = require("chrome-aws-lambda");
-const puppeteer = require("puppeteer");
+const puppeteer = require("puppeteer-core");
 
 const app = express();
 const server = http.createServer(app);
