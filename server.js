@@ -71,38 +71,15 @@ async function getNseCookie() {
   try {
     console.log("🔄 Fetching NSE Cookie...");
 
-    // Check if running locally (Render sets NODE_ENV=production)
-    const isLocal =
-      !process.env.AWS_REGION && process.env.NODE_ENV !== "production";
-
-    // const response = await axios.get("https://www.nseindia.com", {
-    //   headers: {
-    //     "User-Agent":
-    //       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    //     "Accept-Language": "en-US,en;q=0.9",
-    //     Connection: "keep-alive",
-    //     Referer: "https://www.nseindia.com/",
-    //     "Cache-Control": "no-cache",
-    //   },
-    // });
-
-    // console.log("COOKIE_AXIOS", response.headers["set-cookie"].join("; "));
-
     // ✅ Reuse existing browser instance if available
     if (!browser) {
       // Use full Puppeteer locally, chrome-aws-lambda on Render/AWS Lambda
-      browser = await (isLocal
-        ? puppeteer.launch({ headless: "new" }) // Local: Full Puppeteer
-        : puppeteer.launch({
-            executablePath:
-              (await chromium.executablePath) || "/usr/bin/chromium",
-            args: [
-              ...chromium.args,
-              "--disable-dev-shm-usage",
-              "--disable-gpu",
-            ],
-            headless: chromium.headless,
-          }));
+      browser = await puppeteer.launch({
+        executablePath: await chromium.executablePath,
+        args: [...chromium.args, "--disable-dev-shm-usage", "--disable-gpu"],
+        headless: chromium.headless,
+        userDataDir: join(__dirname, ".cache", "puppeteer"), // Custom user data directory
+      });
       console.log("🚀 Puppeteer Browser Launched");
     }
 
