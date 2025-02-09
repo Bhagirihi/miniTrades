@@ -10,6 +10,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@cloudflare/puppeteer": "^0.0.14",
     "axios": "^1.7.9",
     "bcryptjs": "^2.4.3",
     "cheerio": "^1.0.0",

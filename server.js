@@ -6,8 +6,8 @@ const { Server } = require("socket.io");
 const axios = require("axios");
 const path = require("path");
 
+const puppeteer = require("@cloudflare/puppeteer");
 const chromium = require("chrome-aws-lambda");
-const puppeteer = require("puppeteer-core");
 
 const app = express();
 const server = http.createServer(app);
@@ -74,12 +74,13 @@ async function getNseCookie() {
     // ✅ Reuse existing browser instance if available
     if (!browser) {
       // Use full Puppeteer locally, chrome-aws-lambda on Render/AWS Lambda
-      browser = await puppeteer.launch({
-        executablePath: await chromium.executablePath,
-        args: [...chromium.args, "--disable-dev-shm-usage", "--disable-gpu"],
-        headless: chromium.headless,
-        userDataDir: join(__dirname, ".cache", "puppeteer"), // Custom user data directory
-      });
+      browser = await (isLocal
+        ? puppeteer.launch({ headless: true }) // Local: Use full Puppeteer
+        : puppeteer.launch({
+            executablePath: await chromium.executablePath, // Cloud: Use the correct Chromium binary from chrome-aws-lambda
+            args: chromium.args,
+            headless: chromium.headless,
+          }));
       console.log("🚀 Puppeteer Browser Launched");
     }
 
