@@ -6,6 +6,9 @@ const { Server } = require("socket.io");
 const axios = require("axios");
 const path = require("path");
 
+const chromium = require("chrome-aws-lambda");
+const puppeteer = require("puppeteer");
+
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 1000;
@@ -16,6 +19,9 @@ const connectedSocketIds = new Set();
 // Static File path
 const ordersFilePath = path.join(__dirname, "data", "orders.json");
 const authController = require("./controllers/authController"); // 🔹 Import authentication controller
+
+// Global browser instance for reuse
+let browser;
 
 // ✅ Enable CORS & JSON parsing
 app.use(
@@ -61,25 +67,100 @@ const writeOrdersFile = (orders, res, message) => {
  * ✅ Fetch NSE session cookie
  */
 async function getNseCookie() {
+  let browser = null;
   try {
     console.log("🔄 Fetching NSE Cookie...");
-    const response = await axios.get("https://www.nseindia.com", {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-        Connection: "keep-alive",
-        Referer: "https://www.nseindia.com/",
-        "Cache-Control": "no-cache",
-      },
+
+    // Check if running locally (Render sets NODE_ENV=production)
+    const isLocal =
+      !process.env.AWS_REGION && process.env.NODE_ENV !== "production";
+
+    // const response = await axios.get("https://www.nseindia.com", {
+    //   headers: {
+    //     "User-Agent":
+    //       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    //     "Accept-Language": "en-US,en;q=0.9",
+    //     Connection: "keep-alive",
+    //     Referer: "https://www.nseindia.com/",
+    //     "Cache-Control": "no-cache",
+    //   },
+    // });
+
+    // console.log("COOKIE_AXIOS", response.headers["set-cookie"].join("; "));
+
+    // ✅ Reuse existing browser instance if available
+    if (!browser) {
+      // Use full Puppeteer locally, chrome-aws-lambda on Render/AWS Lambda
+      browser = await (isLocal
+        ? puppeteer.launch({ headless: "new" }) // Local: Full Puppeteer
+        : puppeteer.launch({
+            executablePath:
+              (await chromium.executablePath) || "/usr/bin/chromium",
+            args: [
+              ...chromium.args,
+              "--disable-dev-shm-usage",
+              "--disable-gpu",
+            ],
+            headless: chromium.headless,
+          }));
+      console.log("🚀 Puppeteer Browser Launched");
+    }
+
+    const page = await browser.newPage();
+
+    // ✅ Block unnecessary resources (images, fonts, CSS) to speed up loading
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      const resourceType = req.resourceType();
+      if (["image", "stylesheet", "font"].includes(resourceType)) {
+        req.abort();
+      } else {
+        req.continue();
+      }
     });
 
-    return response.headers["set-cookie"].join("; ");
+    // Set real browser headers to avoid detection
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    );
+
+    // ✅ Navigate to NSE India with optimized performance
+    await page.goto("https://www.nseindia.com", {
+      waitUntil: "domcontentloaded", // Faster than networkidle2
+      timeout: 30000, // Lower timeout
+    });
+
+    // ✅ Wait for a known element to ensure page is fully loaded
+    await page.waitForSelector("title", { timeout: 5000 });
+
+    // Extract cookies
+    const cookies = await page.cookies();
+
+    // 🔹 Extract Only Required Cookies
+    const requiredCookies = ["nseappid", "nsit", "_abck", "bm_sz"];
+    const cookieHeader = cookies
+      .filter((cookie) => requiredCookies.includes(cookie.name))
+      .map((cookie) => `${cookie.name}=${cookie.value}`)
+      .join("; ");
+
+    console.log("✅ NSE Cookies Fetched:");
+    await page.close(); // ✅ Close the page (keep browser running)
+
+    return cookieHeader;
   } catch (error) {
     console.error("❌ Failed to fetch NSE cookie:", error.message);
+    if (browser) await browser.close();
     return null;
   }
 }
+
+// ✅ Close Puppeteer Browser Gracefully on Process Exit
+process.on("exit", async () => {
+  if (browser) {
+    await browser.close();
+    console.log("🛑 Puppeteer Browser Closed");
+  }
+});
 
 /**
  * ✅ Central function to fetch multiple NSE data sources
@@ -87,7 +168,11 @@ async function getNseCookie() {
 async function fetchNseData(urls) {
   try {
     const cookieHeader = await getNseCookie();
-    if (!cookieHeader) return null;
+    console.log("cookieHeader", cookieHeader);
+    if (!cookieHeader) {
+      console.error("❌ No cookies found, aborting request.");
+      return res.status(500).json({ error: "Failed to fetch NSE cookie" });
+    }
 
     console.log("🔄 Fetching NSE Data...");
     const requests = urls.map((url) =>
@@ -106,7 +191,7 @@ async function fetchNseData(urls) {
     );
 
     const responses = await Promise.all(requests);
-
+    console.log("✅ NSE DATA Fetched:");
     return responses.map((response, index) =>
       response?.data ? { url: urls[index], data: response.data } : null
     );
