@@ -92,4 +92,3 @@ module.exports = getCookies = async () => {
   // Return cookies data
   return cookies;
 };
-

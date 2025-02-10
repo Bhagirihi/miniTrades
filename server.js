@@ -6,8 +6,8 @@ const { Server } = require("socket.io");
 const axios = require("axios");
 const path = require("path");
 
-const puppeteer = require("@cloudflare/puppeteer");
-const chromium = require("chrome-aws-lambda");
+// const puppeteer = require("@cloudflare/puppeteer");
+// const chromium = require("chrome-aws-lambda");
 
 const app = express();
 const server = http.createServer(app);
@@ -19,7 +19,7 @@ const connectedSocketIds = new Set();
 // Static File path
 const ordersFilePath = path.join(__dirname, "data", "orders.json");
 const authController = require("./controllers/authController"); // 🔹 Import authentication controller
-
+const getCookies = require("./fetch-cookie");
 // Global browser instance for reuse
 let browser;
 
@@ -73,59 +73,60 @@ async function getNseCookie() {
     // ✅ Determine if running in a cloud environment
     // const isLocal =  !process.env.AWS_REGION && process.env.NODE_ENV !== "production";
 
-    if (!browser) {
-      browser = await // isLocal
-      // ? puppeteer.launch({ headless: "new" }) // ✅ Local: Use full Puppeteer
-      puppeteer.launch({
-        executablePath: await chromium.executablePath, // ✅ Cloud: Use AWS Chromium
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-          "--single-process",
-          "--headless=new",
-        ],
-        headless: true,
-        ignoreHTTPSErrors: true,
-        defaultViewport: chromium.defaultViewport,
-      });
+    // if (!browser) {
+    //   browser = await // isLocal
+    //   // ? puppeteer.launch({ headless: "new" }) // ✅ Local: Use full Puppeteer
+    //   puppeteer.launch({
+    //     executablePath: await chromium.executablePath, // ✅ Cloud: Use AWS Chromium
+    //     args: [
+    //       "--no-sandbox",
+    //       "--disable-setuid-sandbox",
+    //       "--disable-dev-shm-usage",
+    //       "--disable-gpu",
+    //       "--single-process",
+    //       "--headless=new",
+    //     ],
+    //     headless: true,
+    //     ignoreHTTPSErrors: true,
+    //     defaultViewport: chromium.defaultViewport,
+    //   });
 
-      console.log("🚀 Puppeteer Browser Launched");
-    } else {
-      console.log("🚀 Puppeteer Browser Launched Already");
-    }
+    //   console.log("🚀 Puppeteer Browser Launched");
+    // } else {
+    //   console.log("🚀 Puppeteer Browser Launched Already");
+    // }
 
-    const page = await browser.newPage();
+    // const page = await browser.newPage();
 
-    // ✅ Optimize page load by blocking unnecessary resources
-    await page.setRequestInterception(true);
-    page.on("request", (req) => {
-      const resourceType = req.resourceType();
-      if (["image", "stylesheet", "font"].includes(resourceType)) {
-        req.abort();
-      } else {
-        req.continue();
-      }
-    });
+    // // ✅ Optimize page load by blocking unnecessary resources
+    // await page.setRequestInterception(true);
+    // page.on("request", (req) => {
+    //   const resourceType = req.resourceType();
+    //   if (["image", "stylesheet", "font"].includes(resourceType)) {
+    //     req.abort();
+    //   } else {
+    //     req.continue();
+    //   }
+    // });
 
-    // ✅ Set proper headers to avoid detection
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    );
+    // // ✅ Set proper headers to avoid detection
+    // await page.setUserAgent(
+    //   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    // );
 
-    // ✅ Load NSE Website
-    await page.goto("https://www.nseindia.com", {
-      waitUntil: "domcontentloaded", // Faster than networkidle2
-      timeout: 30000, // Reduced timeout
-    });
+    // // ✅ Load NSE Website
+    // await page.goto("https://www.nseindia.com", {
+    //   waitUntil: "domcontentloaded", // Faster than networkidle2
+    //   timeout: 30000, // Reduced timeout
+    // });
 
-    await page.waitForSelector("title", { timeout: 5000 });
+    // await page.waitForSelector("title", { timeout: 5000 });
 
-    // ✅ Extract cookies
-    const cookies = await page.cookies();
-    console.log("cookies", cookies);
+    // // ✅ Extract cookies
+    // const cookies = await page.cookies();
+    // console.log("cookies", cookies);
 
+    const cookies = await getCookies();
     // ✅ Extract only required cookies
     const requiredCookies = ["nseappid", "nsit", "_abck", "bm_sz"];
     const cookieHeader = cookies
@@ -135,7 +136,7 @@ async function getNseCookie() {
 
     console.log("✅ NSE Cookies Fetched:", cookieHeader);
 
-    await page.close();
+    // await page.close();
     return cookieHeader;
   } catch (error) {
     console.error("❌ Failed to fetch NSE cookie:", error.message);
