@@ -441,6 +441,15 @@ app.get("/api/index", async (req, res) => {
         .json({ success: false, error: "Failed to fetch index data" });
 });
 
+app.get("/api/cookie", async (req, res) => {
+  const data = await getCookies();
+  data
+    ? res.json({ success: true, data })
+    : res
+        .status(500)
+        .json({ success: false, error: "Failed to fetch index data" });
+});
+
 /**
  * ✅ Start Server
  */
