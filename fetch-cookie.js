@@ -1,5 +1,6 @@
 const puppeteer = require("puppeteer");
 const fs = require("fs");
+const chromium = require("chrome-aws-lambda");
 
 // File to store the cookies
 const COOKIE_FILE_PATH = "./cookies.json";
@@ -24,16 +25,21 @@ const areCookiesExpired = (cookies) => {
 module.exports = getCookies = async () => {
   // Launch browser in headless mode with additional arguments
   const browser = await puppeteer.launch({
-    executablePath: puppeteer.executablePath(),
-    headless: true,
-    args: [
-      "--disable-http2", // Disable HTTP/2
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-blink-features=AutomationControlled", // Bypass headless detection
-      "--start-maximized", // Open the browser window maximized
-      "--disable-infobars", // Disable info bars like "Chrome is being controlled"
-    ],
+    executablePath:
+      (await chromium.executablePath) ||
+      "/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome",
+    args: chromium.args,
+    headless: chromium.headless,
+    // executablePath: puppeteer.executablePath(),
+    // headless: true,
+    // args: [
+    //   "--disable-http2", // Disable HTTP/2
+    //   "--no-sandbox",
+    //   "--disable-setuid-sandbox",
+    //   "--disable-blink-features=AutomationControlled", // Bypass headless detection
+    //   "--start-maximized", // Open the browser window maximized
+    //   "--disable-infobars", // Disable info bars like "Chrome is being controlled"
+    // ],
   });
 
   // Create a new page
