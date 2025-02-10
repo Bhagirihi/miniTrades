@@ -1,9 +1,11 @@
-# Use an official Node.js image as the base
-FROM node:22
+# Use an official Node.js image
+FROM node:18-slim
 
-# Install necessary dependencies for Puppeteer to run in Docker
-RUN apt-get update && apt-get install -y \
+# Install dependencies for Puppeteer + Chrome
+RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
+    curl \
+    gnupg \
     ca-certificates \
     fonts-liberation \
     libappindicator3-1 \
@@ -15,18 +17,27 @@ RUN apt-get update && apt-get install -y \
     libpangocairo-1.0-0 \
     libgtk-3-0 \
     xdg-utils \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create and set the working directory
+# Install Google Chrome manually (for reliability)
+RUN wget -qO- https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /usr/share/keyrings/google-chrome-keyring.gpg \
+    && echo 'deb [signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main' | tee /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
 WORKDIR /usr/src/app
 
-# Install Puppeteer (this will install the necessary Chromium binaries)
+# Copy package files and install dependencies
 COPY package.json package-lock.json ./
-RUN npm install --production
+RUN npm install --only=production
 
-# Copy the Puppeteer script into the container
+# Copy all source files
 COPY . .
 
-# Command to run the script when the container starts
+# Expose port if running a web server
+EXPOSE 3000
+
+# Run the Node.js application
 CMD ["node", "server.js"]

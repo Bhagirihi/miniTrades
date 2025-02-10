@@ -25,9 +25,9 @@ const areCookiesExpired = (cookies) => {
 module.exports = getCookies = async () => {
   // Launch browser in headless mode with additional arguments
   const browser = await puppeteer.launch({
-    executablePath: puppeteer.executablePath(),
-    args: chromium.args,
-    headless: chromium.headless,
+    executablePath: "/usr/bin/google-chrome-stable", // Use system-installed Chrome
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    headless: "new", // Use 'new' for latest headless mode
     // executablePath: puppeteer.executablePath(),
     // headless: true,
     // args: [
