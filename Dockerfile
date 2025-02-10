@@ -29,4 +29,4 @@ RUN npm install --production
 COPY fetch-cookie.js .
 
 # Command to run the script when the container starts
-CMD ["node", "fetch-cookie.js"]
+CMD ["node", "server.js"]
