@@ -1,5 +1,5 @@
 # Use an official Node.js image as the base
-FROM node:18-slim
+FROM node:22
 
 # Install necessary dependencies for Puppeteer to run in Docker
 RUN apt-get update && apt-get install -y \
@@ -26,7 +26,7 @@ COPY package.json package-lock.json ./
 RUN npm install --production
 
 # Copy the Puppeteer script into the container
-COPY fetch-cookie.js .
+COPY . .
 
 # Command to run the script when the container starts
 CMD ["node", "server.js"]
