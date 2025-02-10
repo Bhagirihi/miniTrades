@@ -67,26 +67,38 @@ const writeOrdersFile = (orders, res, message) => {
  * ✅ Fetch NSE session cookie
  */
 async function getNseCookie() {
-  let browser = null;
   try {
     console.log("🔄 Fetching NSE Cookie...");
 
-    // ✅ Reuse existing browser instance if available
+    // ✅ Determine if running in a cloud environment
+    // const isLocal =  !process.env.AWS_REGION && process.env.NODE_ENV !== "production";
+
     if (!browser) {
-      // Use full Puppeteer locally, chrome-aws-lambda on Render/AWS Lambda
-      browser = await (isLocal
-        ? puppeteer.launch({ headless: true }) // Local: Use full Puppeteer
-        : puppeteer.launch({
-            executablePath: await chromium.executablePath, // Cloud: Use the correct Chromium binary from chrome-aws-lambda
-            args: chromium.args,
-            headless: chromium.headless,
-          }));
+      browser = await // isLocal
+      // ? puppeteer.launch({ headless: "new" }) // ✅ Local: Use full Puppeteer
+      puppeteer.launch({
+        executablePath: await chromium.executablePath, // ✅ Cloud: Use AWS Chromium
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--single-process",
+          "--headless=new",
+        ],
+        headless: true,
+        ignoreHTTPSErrors: true,
+        defaultViewport: chromium.defaultViewport,
+      });
+
       console.log("🚀 Puppeteer Browser Launched");
+    } else {
+      console.log("🚀 Puppeteer Browser Launched Already");
     }
 
     const page = await browser.newPage();
 
-    // ✅ Block unnecessary resources (images, fonts, CSS) to speed up loading
+    // ✅ Optimize page load by blocking unnecessary resources
     await page.setRequestInterception(true);
     page.on("request", (req) => {
       const resourceType = req.resourceType();
@@ -97,37 +109,38 @@ async function getNseCookie() {
       }
     });
 
-    // Set real browser headers to avoid detection
+    // ✅ Set proper headers to avoid detection
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     );
 
-    // ✅ Navigate to NSE India with optimized performance
+    // ✅ Load NSE Website
     await page.goto("https://www.nseindia.com", {
       waitUntil: "domcontentloaded", // Faster than networkidle2
-      timeout: 30000, // Lower timeout
+      timeout: 30000, // Reduced timeout
     });
 
-    // ✅ Wait for a known element to ensure page is fully loaded
     await page.waitForSelector("title", { timeout: 5000 });
 
-    // Extract cookies
+    // ✅ Extract cookies
     const cookies = await page.cookies();
+    console.log("cookies", cookies);
 
-    // 🔹 Extract Only Required Cookies
+    // ✅ Extract only required cookies
     const requiredCookies = ["nseappid", "nsit", "_abck", "bm_sz"];
     const cookieHeader = cookies
       .filter((cookie) => requiredCookies.includes(cookie.name))
       .map((cookie) => `${cookie.name}=${cookie.value}`)
       .join("; ");
 
-    console.log("✅ NSE Cookies Fetched:");
-    await page.close(); // ✅ Close the page (keep browser running)
+    console.log("✅ NSE Cookies Fetched:", cookieHeader);
 
+    await page.close();
     return cookieHeader;
   } catch (error) {
     console.error("❌ Failed to fetch NSE cookie:", error.message);
     if (browser) await browser.close();
+    browser = null;
     return null;
   }
 }
@@ -149,7 +162,7 @@ async function fetchNseData(urls) {
     console.log("cookieHeader", cookieHeader);
     if (!cookieHeader) {
       console.error("❌ No cookies found, aborting request.");
-      return res.status(500).json({ error: "Failed to fetch NSE cookie" });
+      return [];
     }
 
     console.log("🔄 Fetching NSE Data...");
