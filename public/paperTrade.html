@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paper Trading | Auto-Bot</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="style.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+
+<body>
+    <nav class="navbar navbar-dark bg-black border-bottom border-info sticky-top shadow-sm">
+        <div class="container-fluid px-4">
+            <span class="navbar-brand fw-bold text-info d-flex align-items-center">
+                <i class="bi bi-robot me-2"></i> PAPER TRADING <span class="text-light ms-1">SIMULATION</span>
+            </span>
+            <div class="d-flex align-items-center">
+                <div class="me-3 text-end">
+                    <small class="text-secondary d-block"><i class="bi bi-bar-chart"></i> TOTAL TRADES</small>
+                    <span id="total-trades" class="fw-bold text-light">0</span>
+                </div>
+                <div class="me-3 border-start border-secondary ps-3 text-end">
+                    <small class="text-secondary d-block"><i class="bi bi-piggy-bank"></i> INVESTED</small>
+                    <span id="invested-val" class="fw-bold text-warning">₹0.00</span>
+                </div>
+                <div class="me-3 border-start border-secondary ps-3 text-end">
+                    <small class="text-secondary d-block"><i class="bi bi-receipt"></i> BROKERAGE</small>
+                    <span id="brokerage-val" class="fw-bold text-secondary">₹0.00</span>
+                </div>
+                <div class="me-3 border-start border-secondary ps-3 text-end">
+                    <small class="text-secondary d-block"><i class="bi bi-cash-stack"></i> REMAINING (CASH)</small>
+                    <span id="cash-val" class="fw-bold text-info">₹100,000.00</span>
+                </div>
+                <div class="me-4 border-start border-secondary ps-3">
+                    <small class="text-secondary d-block"><i class="bi bi-wallet2"></i> TOTAL P&L</small>
+                    <span id="total-pnl" class="fw-bold">₹0.00</span>
+                </div>
+                <button class="btn btn-sm btn-outline-info fw-bold rounded-pill px-3 border-info text-info"
+                    onclick="toggleAutoTrade()">
+                    <i class="bi bi-power"></i> AUTO-TRADE: <span id="auto-status"
+                        class="badge bg-secondary ms-1">OFF</span>
+                </button>
+                <button class="btn btn-sm btn-outline-danger fw-bold rounded-pill px-3 ms-2"
+                    onclick="resetPaperAccount()">
+                    <i class="bi bi-arrow-counterclockwise"></i> RESET
+                </button>
+                <a href="/" class="btn btn-sm btn-secondary ms-2 fw-bold rounded-pill px-3"><i
+                        class="bi bi-box-arrow-left"></i> BACK TO LIVE</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid p-4">
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="alert alert-dark border-info text-light d-flex align-items-center mb-0 shadow-sm"
+                    role="alert">
+                    <i class="bi bi-info-circle-fill text-info fs-4 me-3"></i>
+                    <div>
+                        <strong>Simulation Environment Active.</strong>
+                        Toggle Auto-Trade to ON. The bot will automatically risk 10% of your Virtual Cash on every
+                        STRONG BUY signal, and liquidate on STRONG SELL signals. No real money is used.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-8">
+                <div class="card terminal-card h-100 shadow border-info">
+                    <div class="card-header border-secondary bg-transparent">
+                        <h6 class="mb-0 text-uppercase text-info tracking-wider"><i
+                                class="bi bi-briefcase-fill me-2"></i>Paper Holdings & History</h6>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-dark table-hover mb-0 align-middle font-mono text-center">
+                            <thead>
+                                <tr class="text-secondary small">
+                                    <th>SYMBOL</th>
+                                    <th>QTY</th>
+                                    <th>AVG BUY</th>
+                                    <th>LTP / EXIT</th>
+                                    <th>P&L</th>
+                                    <th>STATUS</th>
+                                </tr>
+                            </thead>
+                            <tbody id="paper-holdings">
+                                <tr>
+                                    <td colspan="6" class="text-center py-4 text-secondary">No recorded positions.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-4">
+                <div class="card terminal-card h-100 shadow border-info bg-gradient-dark">
+                    <div
+                        class="card-header border-secondary bg-transparent d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0 text-uppercase text-info small"><i
+                                class="bi bi-list-columns-reverse me-2"></i>Execution Log</h6>
+                    </div>
+                    <div class="card-body p-0" style="max-height: 500px; overflow-y: auto;">
+                        <ul class="list-group list-group-flush font-mono small" id="paper-logs">
+                            <li class="list-group-item bg-transparent text-secondary text-center py-3 border-0">Waiting
+                                for trades...</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="paper.js"></script>
+</body>
+
+</html>

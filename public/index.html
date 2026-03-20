@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upstox Pro | Mean Reversion Terminal</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="style.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+
+<body>
+
+    <nav class="navbar navbar-dark bg-black border-bottom border-secondary sticky-top shadow-sm">
+        <div class="container-fluid px-4">
+            <span class="navbar-brand fw-bold text-success d-flex align-items-center">
+                <i class="bi bi-graph-up-arrow me-2"></i> UPSTOX <span class="text-light ms-1">PRO</span>
+                <span class="badge bg-secondary ms-3 fs-6 rounded-pill">v2.0 Beta</span>
+            </span>
+
+            <div class="d-flex align-items-center">
+                <div class="me-4 text-end">
+                    <small class="text-secondary d-flex align-items-center justify-content-end mb-1">
+                        <i class="bi bi-bullseye me-1"></i> DAILY GOAL: ₹
+                        <input type="number" id="daily-goal-input"
+                            class="form-control form-control-sm bg-dark text-light border-secondary ms-1 p-0 px-1 text-end fw-bold"
+                            style="width: 70px; height: 20px; font-size: 0.8rem;" value="5000" onchange="updateGoal()">
+                    </small>
+                    <div class="progress" style="height: 6px; width: 150px; background: #2b2f36;">
+                        <div id="profit-progress" class="progress-bar bg-success" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="me-4 border-start border-secondary ps-4">
+                    <small class="text-secondary d-block"><i class="bi bi-wallet2"></i> REALIZED P&L</small>
+                    <span id="total-pnl" class="fw-bold">₹0.00</span>
+                </div>
+                <a href="/login" class="btn btn-sm btn-outline-warning fw-bold rounded-pill px-3"><i
+                        class="bi bi-key-fill"></i> RE-AUTH</a>
+                <a href="/paperTrade.html" class="btn btn-sm btn-outline-info fw-bold rounded-pill px-3 ms-2"><i
+                        class="bi bi-robot"></i> PAPER TRADE</a>
+                <button class="btn btn-sm btn-danger ms-2 fw-bold rounded-pill px-3" onclick="emergencyExit()"><i
+                        class="bi bi-exclamation-triangle-fill"></i> PANIC EXIT</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid p-4">
+        <!-- Friendly Welcome Banner -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="alert alert-dark border-secondary text-light d-flex align-items-center mb-0 shadow-sm"
+                    role="alert">
+                    <i class="bi bi-info-circle-fill text-info fs-4 me-3"></i>
+                    <div>
+                        <strong>Welcome to your Mean Reversion Terminal!</strong>
+                        This dashboard monitors your portfolio in real-time. It highlights buy/sell opportunities based
+                        on statistical z-scores and helps you safely average down losing positions.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4">
+
+            <div class="col-lg-9">
+                <div class="card terminal-card h-100 shadow">
+                    <div class="card-header border-secondary bg-transparent">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6 class="mb-0 text-uppercase tracking-wider"><i
+                                    class="bi bi-briefcase-fill me-2"></i>Active
+                                Portfolio</h6>
+                            <span class="badge bg-dark border border-secondary text-light px-3 py-2 rounded-pill">
+                                <i class="bi bi-sliders me-1"></i> Z-SCORE SENSITIVITY: ±2.5
+                            </span>
+                        </div>
+                        <!-- Filters -->
+                        <div class="row g-2">
+                            <div class="col-md-6 col-lg-4">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text bg-dark border-secondary text-light"><i
+                                            class="bi bi-search"></i></span>
+                                    <input type="text" id="filter-symbol"
+                                        class="form-control bg-black text-light border-secondary"
+                                        placeholder="Search by symbol...">
+                                </div>
+                            </div>
+                            <div class="col-md-6 col-lg-4">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text bg-dark border-secondary text-light"><i
+                                            class="bi bi-funnel-fill"></i></span>
+                                    <select id="filter-signal" class="form-select bg-black text-light border-secondary">
+                                        <option value="ALL">All Signals</option>
+                                        <option value="STRONG BUY">Strong Buy</option>
+                                        <option value="STRONG SELL">Strong Sell</option>
+                                        <option value="NEUTRAL">Neutral</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-dark table-hover mb-0 align-middle">
+                            <thead>
+                                <tr class="text-secondary small">
+                                    <th style="cursor:pointer;" onclick="sortBy('symbol')" class="hover-text-light">
+                                        SYMBOL <i class="bi bi-arrow-down-up opacity-50 ms-1"
+                                            style="font-size: 0.7rem;"></i></th>
+                                    <th style="cursor:pointer;" onclick="sortBy('ltp')" class="hover-text-light">LTP <i
+                                            class="bi bi-arrow-down-up opacity-50 ms-1" style="font-size: 0.7rem;"></i>
+                                    </th>
+                                    <th style="cursor:pointer;" onclick="sortBy('avg')" class="hover-text-light">AVG
+                                        PRICE <i class="bi bi-arrow-down-up opacity-50 ms-1"
+                                            style="font-size: 0.7rem;"></i></th>
+                                    <th style="cursor:pointer;" onclick="sortBy('pnl')" class="hover-text-light">P&L <i
+                                            class="bi bi-arrow-down-up opacity-50 ms-1" style="font-size: 0.7rem;"></i>
+                                    </th>
+                                    <th style="cursor:pointer;" onclick="sortBy('z')" class="hover-text-light">Z-SCORE
+                                        <i class="bi bi-arrow-down-up opacity-50 ms-1" style="font-size: 0.7rem;"></i>
+                                    </th>
+                                    <th style="cursor:pointer;" onclick="sortBy('signal')" class="hover-text-light">
+                                        SIGNAL <i class="bi bi-arrow-down-up opacity-50 ms-1"
+                                            style="font-size: 0.7rem;"></i></th>
+                                    <th class="text-center">SMART ACTIONS</th>
+                                </tr>
+                            </thead>
+                            <tbody id="portfolio-body" class="font-mono">
+                                <tr>
+                                    <td colspan="7" class="text-center text-secondary py-5">
+                                        <div class="spinner-border spinner-border-sm text-success me-2" role="status">
+                                        </div>
+                                        Waiting for live market data...
+                                        <br><small class="mt-2 d-block text-muted">Make sure your backend server is
+                                            running and authenticated with Upstox.</small>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-3">
+                <div class="row g-4">
+                    <div class="col-12">
+                        <div class="card terminal-card bg-gradient-dark shadow">
+                            <div class="card-body">
+                                <h6 class="text-secondary small text-uppercase"><i
+                                        class="bi bi-bullseye text-primary me-2"></i>Daily Goal Strategy</h6>
+                                <div id="goal-strategy" class="mt-3 p-3 rounded border border-secondary bg-black small">
+                                    WAITING FOR P&L DATA...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="card terminal-card bg-gradient-dark shadow">
+                            <div class="card-header border-secondary bg-transparent">
+                                <h6 class="mb-0 text-secondary small text-uppercase"><i
+                                        class="bi bi-stars text-warning me-2"></i>Actionable Ideas</h6>
+                            </div>
+                            <div class="card-body p-0">
+                                <ul class="list-group list-group-flush font-mono small" id="actionable-ideas">
+                                    <li class="list-group-item bg-transparent text-secondary text-center py-3 border-0">
+                                        Scanning for signals...</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="card terminal-card bg-gradient-dark shadow">
+                            <div class="card-body">
+                                <h6 class="text-secondary small text-uppercase"><i
+                                        class="bi bi-thermometer-half me-2"></i>Market Risk Heatmap</h6>
+                                <div id="risk-heatmap" class="mt-3 p-3 rounded text-center fw-bold small border">
+                                    WAITING FOR DATA
+                                </div>
+                                <ul class="list-unstyled mt-3 small text-secondary">
+                                    <li class="mb-1"><i class="bi bi-graph-down me-2"></i>VIX: <span id="vix-val"
+                                            class="text-light fw-bold">--</span></li>
+                                    <li><i class="bi bi-clock-history me-2"></i>Time to Close: <span id="eod-timer"
+                                            class="text-light fw-bold">--</span></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+        <div id="tradeToast" class="toast bg-dark text-white border-secondary" role="alert">
+            <div class="toast-header bg-black text-white border-secondary">
+                <strong class="me-auto text-success">EXECUTION ALERT</strong>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+            </div>
+            <div class="toast-body" id="toast-msg"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>

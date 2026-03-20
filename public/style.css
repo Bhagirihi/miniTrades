@@ -1,0 +1,27 @@
+body {
+  background: #0b0e11;
+  color: white;
+  font-family: sans-serif;
+}
+.card {
+  border: 1px solid #2b2f36;
+  background: #181a20 !important;
+}
+.table {
+  --bs-table-bg: transparent;
+}
+.text-success {
+  color: #02c076 !important;
+}
+.text-danger {
+  color: #f84960 !important;
+}
+#tips-container {
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+.btn-buy {
+  background: #02c076;
+  border: none;
+  font-weight: bold;
+}
