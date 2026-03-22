@@ -30,14 +30,22 @@ let algoHoldings = []; // Tracks only what the bot buys
 let pendingOrders = new Set(); // Prevents duplicate order spamming
 const ALGO_RISK_PER_TRADE = 5000; // Maximum real ₹ to risk per trade
 
-const DATA_DIR = process.env.DATA_DIR || __dirname;
-const PAPER_STATE_FILE = path.join(DATA_DIR, "paper-state.json");
-const TOKEN_FILE = path.join(DATA_DIR, "upstox-token.json");
+let DATA_DIR = process.env.DATA_DIR || __dirname;
 
 // Ensure the data directory exists before attempting to write files
 if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  } catch (error) {
+    console.warn(
+      `⚠️ Could not create DATA_DIR at ${DATA_DIR}. Falling back to project root.`,
+    );
+    DATA_DIR = __dirname;
+  }
 }
+
+const PAPER_STATE_FILE = path.join(DATA_DIR, "paper-state.json");
+const TOKEN_FILE = path.join(DATA_DIR, "upstox-token.json");
 
 // Load existing state if available
 if (fs.existsSync(PAPER_STATE_FILE)) {
