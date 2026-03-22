@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const { SMA, SD, EMA, RSI } = require("technicalindicators");
+const { SMA, SD, EMA, RSI, MACD } = require("technicalindicators");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
@@ -14,6 +14,7 @@ const io = new Server(server);
 app.use(express.static("public"));
 
 let myPortfolio = []; // Global state to hold your real Upstox portfolio
+let upstoxAvailableFunds = 0; // Holds your live Upstox funds
 
 // --- PAPER TRADING STATE ---
 let paperCash = 100000; // ₹1,000,000 starting virtual cash
@@ -22,6 +23,12 @@ let paperLogs = [];
 let isAutoPaperTradeActive = false;
 let totalPaperTrades = 0;
 let totalBrokerage = 0;
+
+// --- ALGO TRADING STATE ---
+let isAlgoTradeActive = false;
+let algoHoldings = []; // Tracks only what the bot buys
+let pendingOrders = new Set(); // Prevents duplicate order spamming
+const ALGO_RISK_PER_TRADE = 5000; // Maximum real ₹ to risk per trade
 
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const PAPER_STATE_FILE = path.join(DATA_DIR, "paper-state.json");
@@ -83,23 +90,24 @@ function savePaperState() {
 
 // --- STRATEGY LOGIC ---
 function analyzeMarket(prices) {
-  if (prices.length < 20) return { signal: "SCANNING", color: "text-gray" };
+  if (prices.length < 50) return { signal: "SCANNING", color: "text-gray" };
 
   const period = 20;
-  const sma = SMA.calculate({ period, values: prices }).pop();
+  const sma20 = SMA.calculate({ period, values: prices }).pop();
   const sd = SD.calculate({ period, values: prices }).pop();
+  const sma50 = SMA.calculate({ period: 50, values: prices }).pop();
   const lastPrice = prices[prices.length - 1];
 
-  const zScore = (lastPrice - sma) / sd;
+  const zScore = (lastPrice - sma20) / sd;
 
   // High Probability Mean Reversion Thresholds
-  if (zScore < -2.5)
+  if (zScore < -2.5 && lastPrice > sma50)
     return {
       signal: "STRONG BUY",
       color: "text-success",
       z: zScore.toFixed(2),
     };
-  if (zScore > 2.5)
+  if (zScore > 2.5 && lastPrice < sma50)
     return {
       signal: "STRONG SELL",
       color: "text-danger",
@@ -110,7 +118,7 @@ function analyzeMarket(prices) {
 
 // --- INTRADAY INDICES STRATEGY (EMA + RSI + SUPERTREND) ---
 function analyzeIntradayIndices(prices) {
-  if (prices.length < 21)
+  if (prices.length < 50)
     return { signal: "SCANNING", color: "text-secondary", z: "WAIT" };
 
   const lastPrice = prices[prices.length - 1];
@@ -118,6 +126,30 @@ function analyzeIntradayIndices(prices) {
   const ema21 =
     EMA.calculate({ period: 21, values: prices }).pop() || lastPrice;
   const rsi = RSI.calculate({ period: 14, values: prices }).pop() || 50;
+
+  // MACD (12, 26, 9)
+  const macdInput = {
+    values: prices,
+    fastPeriod: 12,
+    slowPeriod: 26,
+    signalPeriod: 9,
+    SimpleMAOscillator: false,
+    SimpleMASignal: false,
+  };
+  const macdResult = MACD.calculate(macdInput);
+  const currentMacd =
+    macdResult.length > 0
+      ? macdResult[macdResult.length - 1]
+      : { histogram: 0 };
+  const prevMacd =
+    macdResult.length > 1
+      ? macdResult[macdResult.length - 2]
+      : { histogram: 0 };
+
+  const isMacdBullish =
+    currentMacd.histogram > 0 && currentMacd.histogram > prevMacd.histogram;
+  const isMacdBearish =
+    currentMacd.histogram < 0 && currentMacd.histogram < prevMacd.histogram;
 
   // Pseudo-SuperTrend (Volatility Bands using SD)
   const period = 10;
@@ -132,14 +164,14 @@ function analyzeIntradayIndices(prices) {
   if (lastPrice < upperBand - sd) superTrend = "BEARISH";
 
   // Strategy Execution Logic
-  if (ema9 > ema21 && rsi > 55 && superTrend === "BULLISH") {
+  if (ema9 > ema21 && rsi > 55 && superTrend === "BULLISH" && isMacdBullish) {
     return {
       signal: "STRONG BUY",
       color: "text-success",
       z: `RSI ${rsi.toFixed(0)}`,
     };
   }
-  if (ema9 < ema21 && rsi < 45 && superTrend === "BEARISH") {
+  if (ema9 < ema21 && rsi < 45 && superTrend === "BEARISH" && isMacdBearish) {
     return {
       signal: "STRONG SELL",
       color: "text-danger",
@@ -151,6 +183,27 @@ function analyzeIntradayIndices(prices) {
     color: "text-warning",
     z: `RSI ${rsi.toFixed(0)}`,
   };
+}
+
+// --- FETCH LIVE FUNDS ---
+async function updateFunds() {
+  if (!process.env.ACCESS_TOKEN) return;
+  try {
+    const response = await axios.get(
+      "https://api.upstox.com/v2/user/get-funds-and-margin",
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+          Accept: "application/json",
+        },
+      },
+    );
+    if (response.data && response.data.data && response.data.data.equity) {
+      upstoxAvailableFunds = response.data.data.equity.available_margin;
+    }
+  } catch (error) {
+    console.error("❌ Failed to fetch Upstox funds:", error.message);
+  }
 }
 
 // --- UPSTOX API HANDLERS ---
@@ -173,9 +226,10 @@ async function updatePortfolio() {
         qty: h.quantity,
         avg: h.average_price,
         ltp: h.last_price || h.close_price || 0,
+        close: h.close_price || h.last_price || 0,
         // Seed fake history around the real last price to keep Z-Score running for now
         history: Array.from(
-          { length: 25 },
+          { length: 60 },
           () => (h.last_price || 100) + (Math.random() * 10 - 5),
         ),
       }));
@@ -218,12 +272,26 @@ app.get("/callback", async (req, res) => {
       JSON.stringify({ access_token: resp.data.access_token }, null, 2),
     );
 
-    await updatePortfolio(); // Fetch holdings immediately after auth
+    // Fetch holdings and funds immediately after auth
+    await updatePortfolio();
+    await updateFunds();
+
     res.send(
       "<h1>Authenticated! Redirecting to Terminal...</h1><script>setTimeout(() => window.location.href = '/', 1500);</script>",
     );
   } catch (e) {
-    res.status(500).send("Auth Failed");
+    // Extract the exact error message from the Upstox API response
+    const errorMessage =
+      e.response && e.response.data
+        ? JSON.stringify(e.response.data)
+        : e.message;
+
+    console.error("❌ Upstox Auth Error:", errorMessage);
+    res
+      .status(500)
+      .send(
+        `<h1>Auth Failed</h1><p style="color:red; font-family:monospace;">${errorMessage}</p><br><a href="/">Go Back</a>`,
+      );
   }
 });
 
@@ -274,6 +342,44 @@ app.post("/api/paper-reset", (req, res) => {
   res.json({ status: "success" });
 });
 
+app.post("/api/algo-toggle", (req, res) => {
+  isAlgoTradeActive = !isAlgoTradeActive;
+  res.json({ active: isAlgoTradeActive });
+});
+
+async function executeLiveAlgoOrder(symbol, qty, side) {
+  if (!process.env.ACCESS_TOKEN) return false;
+  const url = "https://api.upstox.com/v2/order/place";
+  const orderData = {
+    quantity: qty,
+    product: "I", // 'I' ensures Upstox automatically closes it if server crashes
+    validity: "DAY",
+    price: 0,
+    tag: "AlgoBot",
+    instrument_token: symbol,
+    order_type: "MARKET",
+    transaction_type: side,
+  };
+
+  try {
+    await axios.post(url, orderData, {
+      headers: {
+        Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+    });
+    console.log(`🚀 ALGO EXECUTION: ${side} ${qty}x ${symbol}`);
+    return true;
+  } catch (error) {
+    console.error(
+      `❌ ALGO ERROR (${symbol}):`,
+      error.response ? error.response.data : error.message,
+    );
+    return false;
+  }
+}
+
 // --- REAL-TIME EMITTER ---
 let tickCounter = 0; // Tracks time for smooth price simulation
 io.on("connection", (socket) => {
@@ -282,77 +388,9 @@ io.on("connection", (socket) => {
     let dataToProcess = [];
 
     if (myPortfolio.length > 0) {
-      // Simulate realistic smooth market cycles using a sine wave
-      dataToProcess = myPortfolio.map((stock, index) => {
-        const trend = Math.sin(tickCounter / 10 + index) * 2; // Smooth up/down wave
-        const noise = Math.random() * 0.5 - 0.25; // Tiny bit of random noise
-        const newLtp = stock.ltp + trend + noise;
-
-        stock.ltp = newLtp;
-        stock.history.shift(); // remove oldest price
-        stock.history.push(newLtp); // add newest price
-        return stock;
-      });
-    } else {
-      // Fallback Mock Data if not logged in or portfolio is empty
-      dataToProcess = [
-        {
-          symbol: "RELIANCE",
-          qty: 10,
-          ltp: 2450 + Math.sin(tickCounter / 10) * 15,
-          avg: 2440,
-          history: Array.from(
-            { length: 25 },
-            (_, i) => 2450 + Math.sin((tickCounter - 25 + i) / 10) * 15,
-          ),
-        },
-        {
-          symbol: "NIFTY_FUT",
-          qty: 1,
-          ltp: 22100 - Math.sin(tickCounter / 10) * 30,
-          avg: 22150,
-          history: Array.from(
-            { length: 25 },
-            (_, i) => 22100 - Math.sin((tickCounter - 25 + i) / 10) * 30,
-          ),
-        },
-        {
-          symbol: "BANKNIFTY_FUT",
-          qty: 1,
-          ltp: 46000 - Math.sin(tickCounter / 10) * 50,
-          avg: 46150,
-          history: Array.from(
-            { length: 25 },
-            (_, i) => 46000 - Math.sin((tickCounter - 25 + i) / 10) * 50,
-          ),
-        },
-      ];
+      // Use the actual static Upstox portfolio data without simulation
+      dataToProcess = myPortfolio;
     }
-
-    // Inject new non-portfolio opportunities to test the "Shares to Add" widget
-    const screenerStocks = [
-      {
-        symbol: "HDFCBANK",
-        qty: 0,
-        ltp: 1450 + Math.sin(tickCounter / 8) * 15,
-        avg: 0,
-        history: Array.from(
-          { length: 25 },
-          (_, i) => 1450 + Math.sin((tickCounter - 25 + i) / 8) * 15,
-        ),
-      },
-      {
-        symbol: "TCS",
-        qty: 0,
-        ltp: 3900 - Math.sin(tickCounter / 12) * 20,
-        avg: 0,
-        history: Array.from(
-          { length: 25 },
-          (_, i) => 3900 - Math.sin((tickCounter - 25 + i) / 12) * 20,
-        ),
-      },
-    ];
-    dataToProcess = [...dataToProcess, ...screenerStocks];
 
     const processed = dataToProcess.map((s) => {
       const isIndex = s.symbol.includes("NIFTY");
@@ -393,6 +431,7 @@ io.on("connection", (socket) => {
           exists.status = "SQUARE OFF";
           exists.exitPrice = stock.ltp;
           exists.pnl = pnl;
+          exists.exitTime = new Date().toLocaleTimeString();
 
           paperLogs.unshift({
             time: new Date().toLocaleTimeString(),
@@ -418,9 +457,10 @@ io.on("connection", (socket) => {
             (exists.highPrice - stock.ltp) / exists.highPrice;
 
           let closeReason = null;
-          if (pnlPct >= 0.015) closeReason = "TAKE PROFIT";
-          else if (dropFromHigh >= 0.005)
-            closeReason = pnlPct > 0 ? "TRAILING STOP" : "STOP LOSS";
+          if (pnlPct >= 0.025) closeReason = "TAKE PROFIT";
+          else if (pnlPct <= -0.015) closeReason = "STOP LOSS";
+          else if (pnlPct > 0 && dropFromHigh >= 0.01)
+            closeReason = "TRAILING STOP";
 
           if (closeReason) {
             const revenue = exists.qty * stock.ltp;
@@ -432,6 +472,7 @@ io.on("connection", (socket) => {
             exists.status = closeReason;
             exists.exitPrice = stock.ltp;
             exists.pnl = pnl;
+            exists.exitTime = new Date().toLocaleTimeString();
 
             paperLogs.unshift({
               time: new Date().toLocaleTimeString(),
@@ -477,6 +518,7 @@ io.on("connection", (socket) => {
                     ltp: stock.ltp,
                     highPrice: stock.ltp,
                     status: "ACTIVE",
+                    buyTime: new Date().toLocaleTimeString(),
                   });
                 }
                 paperLogs.unshift({
@@ -503,6 +545,7 @@ io.on("connection", (socket) => {
             exists.status = "SELL";
             exists.exitPrice = stock.ltp;
             exists.pnl = pnl;
+            exists.exitTime = new Date().toLocaleTimeString();
 
             paperLogs.unshift({
               time: new Date().toLocaleTimeString(),
@@ -529,6 +572,73 @@ io.on("connection", (socket) => {
       if (paperStateChanged) savePaperState();
     }
 
+    // --- LIVE ALGO TRADER LOGIC ---
+    if (isAlgoTradeActive && process.env.ACCESS_TOKEN) {
+      const now = new Date();
+      const istDate = new Date(
+        now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
+      );
+      const isSquareOffTime =
+        (istDate.getHours() === 15 && istDate.getMinutes() >= 15) ||
+        istDate.getHours() > 15; // 3:15 PM Square-off
+
+      for (const stock of processed) {
+        if (pendingOrders.has(stock.symbol)) continue; // Lock prevents rapid-fire duplicate orders
+
+        const existsIndex = algoHoldings.findIndex(
+          (h) => h.symbol === stock.symbol,
+        );
+        const exists = algoHoldings[existsIndex];
+        const token = stock.instrument_token || stock.symbol;
+
+        // 0. Auto Square-Off or Safety Exits
+        if (exists) {
+          exists.highPrice = Math.max(
+            exists.highPrice || exists.avg,
+            stock.ltp,
+          );
+          const pnlPct = (stock.ltp - exists.avg) / exists.avg;
+          const dropFromHigh =
+            (exists.highPrice - stock.ltp) / exists.highPrice;
+
+          let shouldSell = isSquareOffTime; // Always sell at 3:15 PM
+          if (!shouldSell) {
+            if (pnlPct >= 0.025)
+              shouldSell = true; // Take Profit
+            else if (pnlPct <= -0.015)
+              shouldSell = true; // Stop Loss
+            else if (pnlPct > 0 && dropFromHigh >= 0.01)
+              shouldSell = true; // Trailing Stop
+            else if (stock.analysis.signal === "STRONG SELL") shouldSell = true; // Strategy
+          }
+
+          if (shouldSell) {
+            pendingOrders.add(stock.symbol);
+            executeLiveAlgoOrder(token, exists.qty, "SELL").then((success) => {
+              if (success) algoHoldings.splice(existsIndex, 1);
+              pendingOrders.delete(stock.symbol);
+            });
+          }
+        } else if (stock.analysis.signal === "STRONG BUY" && !isSquareOffTime) {
+          const qty = Math.floor(ALGO_RISK_PER_TRADE / stock.ltp);
+          if (qty > 0) {
+            pendingOrders.add(stock.symbol);
+            executeLiveAlgoOrder(token, qty, "BUY").then((success) => {
+              if (success)
+                algoHoldings.push({
+                  symbol: stock.symbol,
+                  qty,
+                  avg: stock.ltp,
+                  ltp: stock.ltp,
+                  highPrice: stock.ltp,
+                });
+              pendingOrders.delete(stock.symbol);
+            });
+          }
+        }
+      }
+    }
+
     // Update live LTP for active paper holdings to calculate unrealized P&L
     paperHoldings.forEach((ph) => {
       if (ph.status === "ACTIVE") {
@@ -538,6 +648,7 @@ io.on("connection", (socket) => {
     });
 
     socket.emit("tick", processed);
+    socket.emit("upstox-funds", upstoxAvailableFunds);
     socket.emit("paper-state", {
       paperCash,
       paperHoldings,
@@ -552,6 +663,10 @@ io.on("connection", (socket) => {
 // Fetch portfolio immediately on startup if we have a saved token
 if (process.env.ACCESS_TOKEN) {
   updatePortfolio();
+  updateFunds();
+
+  // Keep funds updated every 60 seconds to avoid API rate limits
+  setInterval(updateFunds, 60000);
 }
 
 const PORT = process.env.PORT || 3000;

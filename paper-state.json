@@ -1,6 +1,16 @@
 {
-  "paperCash": 280371.5750026527,
+  "paperCash": 280214.20945419226,
   "paperHoldings": [
+    {
+      "symbol": "KEI",
+      "qty": 6,
+      "avg": 4189.532481172313,
+      "ltp": 4169.039239800057,
+      "highPrice": 4189.532481172313,
+      "status": "STOP LOSS",
+      "exitPrice": 4167.483397701675,
+      "pnl": -144.79695101693258
+    },
     {
       "symbol": "IRFC",
       "qty": 220,
@@ -490,19 +500,25 @@
       "status": "STOP LOSS",
       "exitPrice": 235.10212260568758,
       "pnl": -202.64268820619247
-    },
-    {
-      "symbol": "IRFC",
-      "qty": 214,
-      "avg": 124.68869738062249,
-      "ltp": 124.68869738062249,
-      "highPrice": 124.68869738062249,
-      "status": "STOP LOSS",
-      "exitPrice": 122.95244960696441,
-      "pnl": -384.71293567077083
     }
   ],
   "paperLogs": [
+    {
+      "time": "8:45:39 PM",
+      "action": "STOP LOSS",
+      "symbol": "KEI",
+      "qty": 6,
+      "price": 4167.483397701675,
+      "pnl": -144.79695101693258
+    },
+    {
+      "time": "8:45:38 PM",
+      "action": "BUY",
+      "symbol": "KEI",
+      "qty": 6,
+      "price": 4189.532481172313,
+      "pnl": 0
+    },
     {
       "time": "3:55:59 PM",
       "action": "STOP LOSS",
@@ -886,25 +902,9 @@
       "qty": 55,
       "price": 489.8882398411921,
       "pnl": 0
-    },
-    {
-      "time": "3:23:29 PM",
-      "action": "STOP LOSS",
-      "symbol": "RELIANCE",
-      "qty": 19,
-      "price": 1401.7062049177507,
-      "pnl": -162.70540387489012
-    },
-    {
-      "time": "3:23:29 PM",
-      "action": "BUY",
-      "symbol": "RELIANCE",
-      "qty": 19,
-      "price": 1409.5687941244967,
-      "pnl": 0
     }
   ],
   "isAutoPaperTradeActive": false,
-  "totalPaperTrades": 804,
-  "totalBrokerage": 7701.393416435353
+  "totalPaperTrades": 806,
+  "totalBrokerage": 7726.464464071975
 }

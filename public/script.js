@@ -14,6 +14,26 @@ function updateGoal() {
   renderTable(); // Re-render to update the progress bar and goal math
 }
 
+function toggleAlgoTrade() {
+  if (
+    confirm(
+      "🚨 WARNING: You are enabling LIVE algorithmic trading.\nThe bot will automatically execute REAL Market orders with your actual Upstox capital (Max ₹5,000 per trade).\n\nAre you sure you want to proceed?",
+    )
+  ) {
+    fetch("/api/algo-toggle", { method: "POST" })
+      .then((res) => res.json())
+      .then((data) => {
+        const badge = document.getElementById("algo-status");
+        badge.innerText = data.active ? "ON" : "OFF";
+        badge.className = data.active
+          ? "badge bg-success ms-1"
+          : "badge bg-secondary ms-1";
+        if (data.active)
+          alert("LIVE ALGO ENGAGED. Monitor execution logs in your terminal.");
+      });
+  }
+}
+
 // Event Listeners for Filters
 document.getElementById("filter-symbol")?.addEventListener("input", (e) => {
   currentSymbolFilter = e.target.value.toUpperCase();
@@ -59,6 +79,37 @@ socket.on("tick", (data) => {
 
   renderTable();
 });
+
+// Listen for live funds update from Upstox
+socket.on("upstox-funds", (funds) => {
+  let fundsEl = document.getElementById("upstox-funds-val");
+  if (fundsEl) {
+    fundsEl.innerText = `₹${funds.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+});
+
+function updatePortfolioSummary(invested, current, totalReturn, todayReturn) {
+  const totalReturnPct = invested > 0 ? (totalReturn / invested) * 100 : 0;
+  const totalReturnSign = totalReturn >= 0 ? "+" : "";
+  const todayReturnSign = todayReturn >= 0 ? "+" : "";
+
+  document.getElementById("summary-invested").innerText =
+    `₹${invested.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  document.getElementById("summary-current").innerText =
+    `₹${current.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const trEl = document.getElementById("summary-total-return");
+  if (trEl) {
+    trEl.innerText = `${totalReturnSign}₹${Math.abs(totalReturn).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${totalReturnSign}${totalReturnPct.toFixed(2)}%)`;
+    trEl.className = `fs-4 fw-bold font-mono ${totalReturn >= 0 ? "text-up" : "text-down"}`;
+  }
+
+  const tdEl = document.getElementById("summary-today-return");
+  if (tdEl) {
+    tdEl.innerText = `${todayReturnSign}₹${Math.abs(todayReturn).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    tdEl.className = `fs-4 fw-bold font-mono ${todayReturn >= 0 ? "text-up" : "text-down"}`;
+  }
+}
 
 function renderTable() {
   const tbody = document.getElementById("portfolio-body");
@@ -118,13 +169,40 @@ function renderTable() {
     });
   }
 
+  // Calculate Portfolio-wide summary data
+  let totalInvested = 0;
+  let totalCurrent = 0;
+  let totalReturn = 0;
+  let todayReturn = 0;
+
+  latestData.forEach((stock) => {
+    const qty =
+      stock.qty !== undefined
+        ? stock.qty
+        : stock.quantity !== undefined
+          ? stock.quantity
+          : 1;
+    if (qty > 0) {
+      const invested = qty * stock.avg;
+      const current = qty * stock.ltp;
+      const closePrice = stock.close || stock.avg || stock.ltp;
+      totalInvested += invested;
+      totalCurrent += current;
+      totalReturn += current - invested;
+      todayReturn += qty * (stock.ltp - closePrice);
+    }
+  });
+
+  // Render new dashboard stats
+  updatePortfolioSummary(totalInvested, totalCurrent, totalReturn, todayReturn);
+
   let totalUnrealizedPnl = 0;
   let tableHtml = "";
 
   filteredData.forEach((stock) => {
     // Calculate P&L Percentage
     const pnlPercent = (((stock.ltp - stock.avg) / stock.avg) * 100).toFixed(2);
-    const pnlClass = pnlPercent >= 0 ? "text-success" : "text-danger";
+    const pnlClass = pnlPercent >= 0 ? "text-up" : "text-down";
     const qty =
       stock.qty !== undefined
         ? stock.qty
@@ -135,17 +213,17 @@ function renderTable() {
 
     let row = `
             <tr>
-                <td class="fw-bold">${stock.symbol} <span class="badge bg-secondary ms-1">${qty} Qty</span></td>
+                <td class="fw-bold text-white">${stock.symbol} <span class="badge bg-secondary bg-opacity-25 text-secondary border border-secondary border-opacity-25 ms-2">${qty} Qty</span></td>
                 <td>₹${stock.ltp.toFixed(2)}</td>
                 <td>₹${stock.avg}</td>
                 <td class="${pnlClass}">${pnlPercent >= 0 ? "+" : ""}${pnlPercent}%</td>
                 <td>${stock.analysis.z}</td>
-                <td class="${stock.analysis.color} fw-bold">${stock.analysis.signal}</td>
+                <td class="${stock.analysis.color.replace("text-success", "text-up").replace("text-danger", "text-down")} fw-bold">${stock.analysis.signal}</td>
                 <td>
-                    <div class="btn-group shadow-sm" role="group">
-                        <button class="btn btn-sm btn-buy text-white" onclick="placeOrder('${stock.symbol}', 1, 'BUY')">BUY</button>
-                        <button class="btn btn-sm btn-danger" onclick="placeOrder('${stock.symbol}', ${qty}, 'SELL')">SELL</button>
-                        <button class="btn btn-sm btn-outline-info" title="Average Down" onclick="calculateAverageBuy('${stock.symbol}', ${stock.ltp}, ${stock.avg}, ${qty})"><i class="bi bi-calculator"></i> AVG</button>
+                    <div class="btn-group" role="group">
+                        <button class="btn btn-sm btn-outline-success font-mono" onclick="placeOrder('${stock.symbol}', 1, 'BUY')">B</button>
+                        <button class="btn btn-sm btn-outline-danger font-mono" onclick="placeOrder('${stock.symbol}', ${qty}, 'SELL')">S</button>
+                        <button class="btn btn-sm btn-outline-info font-mono" title="Average Down" onclick="calculateAverageBuy('${stock.symbol}', ${stock.ltp}, ${stock.avg}, ${qty})"><i class="bi bi-calculator"></i></button>
                     </div>
                 </td>
             </tr>
@@ -156,9 +234,9 @@ function renderTable() {
     if (pSignal) {
       row += `
         <tr>
-          <td colspan="7" class="border-top-0 pt-0 pb-3">
-            <div class="alert alert-info py-2 px-3 mb-0 shadow-sm border-info text-dark d-flex align-items-center rounded-3">
-              <i class="bi bi-fire text-danger fs-5 me-2"></i>
+          <td colspan="7" class="border-top-0 pt-0 pb-4">
+            <div class="bg-primary bg-opacity-10 border border-primary border-opacity-25 text-white py-2 px-3 mb-0 d-flex align-items-center rounded">
+              <i class="bi bi-lightning-charge-fill text-warning fs-5 me-2"></i>
               <span style="font-size: 0.85rem;"><strong>HOT TIP:</strong> This position triggered a <strong>${pSignal.triggeredSignal}</strong> reversal setup (Z: ${pSignal.triggeredZ}) at ${new Date(pSignal.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}. Consider taking action to boost P&L.</span>
             </div>
           </td>
@@ -178,7 +256,7 @@ function updateRightSidebar(totalUnrealizedPnl) {
   document.getElementById("total-pnl").innerText =
     `₹${totalUnrealizedPnl.toFixed(2)}`;
   document.getElementById("total-pnl").className =
-    `fw-bold ${totalUnrealizedPnl >= 0 ? "text-success" : "text-danger"}`;
+    `fs-5 fw-bold font-mono ${totalUnrealizedPnl >= 0 ? "text-up" : "text-down"}`;
 
   const goal = currentGoal;
   document.getElementById("profit-progress").style.width =
@@ -186,10 +264,10 @@ function updateRightSidebar(totalUnrealizedPnl) {
 
   const goalStrategy = document.getElementById("goal-strategy");
   if (totalUnrealizedPnl >= goal) {
-    goalStrategy.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i> Goal Reached!</span><br><span class="text-light opacity-75">Consider trailing your stop losses to protect profits.</span>`;
+    goalStrategy.innerHTML = `<span class="text-up"><i class="bi bi-check-circle-fill me-1"></i> Target Reached!</span><br><span class="text-muted mt-1 d-block">Consider trailing your stops.</span>`;
   } else {
     const remaining = goal - totalUnrealizedPnl;
-    goalStrategy.innerHTML = `<span class="text-warning"><i class="bi bi-exclamation-triangle-fill me-1"></i> ₹${remaining.toFixed(2)} remaining.</span><br><span class="text-light opacity-75 d-block mt-2">💡 <strong>Strategy:</strong> To safely clear this, look for a 1% capture by risking ~₹${(remaining * 100).toFixed(0)} capital on strong mean-reversion signals.</span>`;
+    goalStrategy.innerHTML = `<span class="text-warning"><i class="bi bi-exclamation-triangle-fill me-1"></i> ₹${remaining.toFixed(2)} away.</span><br><span class="text-muted d-block mt-2">💡 Need 1% capture on ~₹${(remaining * 100).toFixed(0)} capital.</span>`;
   }
 
   // 2. Build Actionable Ideas List (Includes both new and existing holdings)
@@ -201,7 +279,7 @@ function updateRightSidebar(totalUnrealizedPnl) {
     const isNew = pSignal.qty === 0 || pSignal.quantity === 0;
     const action = pSignal.triggeredSignal === "STRONG BUY" ? "ADD" : "DROP";
     const actionColor =
-      pSignal.triggeredSignal === "STRONG BUY" ? "text-success" : "text-danger";
+      pSignal.triggeredSignal === "STRONG BUY" ? "text-up" : "text-down";
     const icon =
       pSignal.triggeredSignal === "STRONG BUY"
         ? "bi-arrow-up-circle-fill"
@@ -219,12 +297,12 @@ function updateRightSidebar(totalUnrealizedPnl) {
     });
 
     ideasHtml += `
-        <li class="list-group-item bg-transparent border-secondary d-flex justify-content-between align-items-center py-2">
+        <li class="list-group-item bg-transparent border-subtle border-start-0 border-end-0 border-top-0 d-flex justify-content-between align-items-center py-3">
           <div>
             <span class="${actionColor} fw-bold me-2" style="font-size: 0.75rem;"><i class="bi ${icon}"></i> ${action}</span>
-            <span class="text-light">${pSignal.symbol}</span>
-            ${isNew ? '<span class="badge bg-primary ms-1" style="font-size: 0.6rem;">NEW</span>' : ""}
-            <div class="text-secondary mt-1" style="font-size: 0.65rem;"><i class="bi bi-clock"></i> ${timeStr} | Z: ${pSignal.triggeredZ}</div>
+            <span class="text-white">${pSignal.symbol}</span>
+            ${isNew ? '<span class="badge bg-primary bg-opacity-25 text-primary ms-1 border border-primary border-opacity-25" style="font-size: 0.6rem;">NEW</span>' : ""}
+            <div class="text-muted mt-1 font-sans" style="font-size: 0.65rem;"><i class="bi bi-clock"></i> ${timeStr} • Z: ${pSignal.triggeredZ}</div>
           </div>
           <button class="btn btn-sm ${btnClass} py-0 px-2" style="font-size: 0.7rem;" onclick="placeOrder('${pSignal.symbol}', ${qtyToTrade}, '${btnText}')">${btnText}</button>
         </li>
@@ -232,7 +310,7 @@ function updateRightSidebar(totalUnrealizedPnl) {
   });
 
   if (ideasHtml === "") {
-    actionableIdeas.innerHTML = `<li class="list-group-item bg-transparent text-secondary text-center py-3 border-0">No strong signals right now.</li>`;
+    actionableIdeas.innerHTML = `<li class="list-group-item bg-transparent text-muted text-center py-4 border-0">No setups detected.</li>`;
   } else {
     actionableIdeas.innerHTML = ideasHtml;
   }
@@ -245,21 +323,17 @@ function updateRightSidebar(totalUnrealizedPnl) {
   const heatmap = document.getElementById("risk-heatmap");
   if (avgZ <= -1) {
     heatmap.className =
-      "mt-3 p-3 rounded text-center fw-bold small border border-success bg-success bg-opacity-25 text-success";
+      "mt-2 p-3 rounded text-center fw-bold small border border-success bg-success bg-opacity-10 text-up";
     heatmap.innerText = "BULLISH / LOW RISK";
   } else if (avgZ >= 1) {
     heatmap.className =
-      "mt-3 p-3 rounded text-center fw-bold small border border-danger bg-danger bg-opacity-25 text-danger";
+      "mt-2 p-3 rounded text-center fw-bold small border border-danger bg-danger bg-opacity-10 text-down";
     heatmap.innerText = "BEARISH / HIGH RISK";
   } else {
     heatmap.className =
-      "mt-3 p-3 rounded text-center fw-bold small border border-warning bg-warning bg-opacity-25 text-warning";
+      "mt-2 p-3 rounded text-center fw-bold small border border-warning bg-warning bg-opacity-10 text-warning";
     heatmap.innerText = "NEUTRAL / RANGEBOUND";
   }
-
-  document.getElementById("vix-val").innerText = "14.50 (-1.2%)"; // Mocked VIX
-  document.getElementById("eod-timer").innerText =
-    `${Math.max(0, 15 - new Date().getHours())}h ${Math.max(0, 30 - new Date().getMinutes())}m`;
 }
 
 // Add this function to your existing script.js
