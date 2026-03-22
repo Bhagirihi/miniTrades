@@ -34,6 +34,11 @@ const DATA_DIR = process.env.DATA_DIR || __dirname;
 const PAPER_STATE_FILE = path.join(DATA_DIR, "paper-state.json");
 const TOKEN_FILE = path.join(DATA_DIR, "upstox-token.json");
 
+// Ensure the data directory exists before attempting to write files
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
 // Load existing state if available
 if (fs.existsSync(PAPER_STATE_FILE)) {
   try {
