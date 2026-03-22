@@ -93,6 +93,7 @@
             margin-bottom: 0;
             color: var(--text-main);
             border-color: var(--border-color);
+            white-space: nowrap;
         }
 
         .table thead th {
@@ -147,9 +148,10 @@
 </head>
 
 <body>
-    <nav class="navbar app-navbar sticky-top py-2">
-        <div class="container-fluid px-4">
-            <div class="d-flex align-items-center">
+    <nav class="navbar app-navbar sticky-top py-3 py-md-2">
+        <div
+            class="container-fluid px-3 px-md-4 d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between gap-3 gap-md-0">
+            <div class="d-flex align-items-center w-100 w-md-auto justify-content-between">
                 <span class="navbar-brand fw-bold d-flex align-items-center mb-0 text-white">
                     <div class="bg-info text-dark rounded d-flex align-items-center justify-content-center me-2"
                         style="width: 32px; height: 32px;">
@@ -160,42 +162,44 @@
                         style="font-size: 0.65rem;">PAPER SIMULATOR</span>
                 </span>
             </div>
-            <div class="d-flex gap-2">
-                <a href="/" class="btn btn-sm btn-outline-secondary btn-action"><i class="bi bi-arrow-left"></i> LIVE
+            <div class="d-flex flex-wrap gap-2 w-100 w-md-auto mt-2 mt-md-0">
+                <a href="/" class="btn btn-sm btn-outline-secondary btn-action flex-grow-1 flex-sm-grow-0"><i
+                        class="bi bi-arrow-left"></i> LIVE
                     TERMINAL</a>
-                <button class="btn btn-sm btn-outline-info btn-action" onclick="toggleAutoTrade()">
+                <button class="btn btn-sm btn-outline-info btn-action flex-grow-1 flex-sm-grow-0"
+                    onclick="toggleAutoTrade()">
                     <i class="bi bi-play-circle-fill"></i> AUTO-TRADE: <span id="auto-status"
                         class="badge bg-secondary ms-1">OFF</span>
                 </button>
-                <button class="btn btn-sm btn-outline-warning btn-action" onclick="exportToCSV()"><i
-                        class="bi bi-download"></i> EXPORT CSV</button>
-                <button class="btn btn-sm btn-outline-danger btn-action" onclick="resetPaperAccount()"><i
-                        class="bi bi-arrow-clockwise"></i> RESET</button>
+                <button class="btn btn-sm btn-outline-warning btn-action flex-grow-1 flex-sm-grow-0"
+                    onclick="exportToCSV()"><i class="bi bi-download"></i> EXPORT CSV</button>
+                <button class="btn btn-sm btn-outline-danger btn-action flex-grow-1 flex-sm-grow-0"
+                    onclick="resetPaperAccount()"><i class="bi bi-arrow-clockwise"></i> RESET</button>
             </div>
         </div>
     </nav>
 
     <div class="container-fluid p-4">
-        <div class="row g-4 mb-4">
-            <div class="col-md-3">
+        <div class="row g-3 g-md-4 mb-4">
+            <div class="col-6 col-md-3">
                 <div class="stat-card">
                     <div class="stat-label">Virtual Cash Remaining</div>
                     <div id="cash-val" class="fs-4 fw-bold font-mono text-info">₹1,00,000.00</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-6 col-md-3">
                 <div class="stat-card">
                     <div class="stat-label">Total Invested</div>
                     <div id="invested-val" class="fs-4 fw-bold font-mono">₹0.00</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-6 col-md-3">
                 <div class="stat-card">
                     <div class="stat-label">Simulated Brokerage</div>
                     <div id="brokerage-val" class="fs-4 fw-bold font-mono text-warning">₹0.00</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-6 col-md-3">
                 <div class="stat-card border-info">
                     <div class="stat-label text-info">Net Platform P&L</div>
                     <div id="total-pnl" class="fs-4 fw-bold font-mono text-muted">₹0.00</div>
@@ -206,9 +210,9 @@
         <div class="row g-4">
             <div class="col-lg-8">
                 <div class="table-container h-100">
-                    <div class="p-3 border-bottom border-subtle">
-                        <h6 class="mb-0 fw-bold"><i class="bi bi-journal-text me-2"></i> Paper Trade Ledger <span
-                                class="badge bg-secondary float-end" id="total-trades">0 Trades</span></h6>
+                    <div class="p-3 border-bottom border-subtle d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0 fw-bold"><i class="bi bi-journal-text me-2"></i> Paper Trade Ledger</h6>
+                        <span class="badge bg-secondary" id="total-trades">0 Trades</span>
                     </div>
                     <div class="table-responsive log-container" style="height: 500px;">
                         <table class="table table-hover font-mono align-middle">
