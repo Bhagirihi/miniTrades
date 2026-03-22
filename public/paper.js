@@ -1,5 +1,14 @@
 const socket = io();
 
+// Gatekeeper: Redirect to login if not authenticated
+fetch("/api/auth-status")
+  .then((res) => res.json())
+  .then((data) => {
+    if (!data.authenticated) {
+      window.location.href = "/login.html";
+    }
+  });
+
 let globalPaperHoldings = [];
 
 function toggleAutoTrade() {

@@ -258,8 +258,13 @@ async function updatePortfolio() {
   }
 }
 
+// --- AUTH STATUS CHECK ---
+app.get("/api/auth-status", (req, res) => {
+  res.json({ authenticated: !!process.env.ACCESS_TOKEN });
+});
+
 // --- UPSTOX AUTH ROUTES ---
-app.get("/login", (req, res) => {
+app.get("/auth/upstox", (req, res) => {
   const url = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${process.env.API_KEY}&redirect_uri=${process.env.REDIRECT_URI}`;
   res.redirect(url);
 });

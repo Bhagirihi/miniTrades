@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | Upstox Pro Terminal</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --bg-base: #0f172a;
+            --bg-surface: #1e293b;
+            --border-color: #334155;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --color-accent: #3b82f6;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            -webkit-font-smoothing: antialiased;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+        }
+
+        .login-card {
+            background: linear-gradient(145deg, var(--bg-surface), #151e2e);
+            border: 1px solid var(--border-color);
+            border-radius: 1rem;
+            padding: 3rem 2.5rem;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            max-width: 420px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .brand-icon {
+            width: 72px;
+            height: 72px;
+            background-color: var(--color-accent);
+            color: white;
+            border-radius: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            margin: 0 auto 1.5rem;
+        }
+
+        .btn-upstox {
+            background-color: #6a1b9a;
+            /* Upstox purple signature color */
+            color: white;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            padding: 0.85rem 1.5rem;
+            border-radius: 0.5rem;
+            text-transform: uppercase;
+            transition: all 0.2s ease;
+            border: none;
+            width: 100%;
+            margin-top: 1.5rem;
+        }
+
+        .btn-upstox:hover {
+            background-color: #8e24aa;
+            color: white;
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="login-card">
+        <div class="brand-icon shadow-lg"><i class="bi bi-activity"></i></div>
+        <h3 class="fw-bold mb-2">Upstox Pro</h3>
+        <p class="text-muted small mb-4">Mean Reversion Trading Terminal</p>
+        <div class="alert alert-dark border border-secondary text-start small mb-0 mt-4 text-muted bg-opacity-10"
+            style="font-size: 0.8rem;">
+            <i class="bi bi-shield-lock me-2 text-info"></i> Secure OAuth2 login. Your credentials are encrypted and
+            never stored locally.
+        </div>
+        <a href="/auth/upstox" class="btn btn-upstox d-flex align-items-center justify-content-center"><i
+                class="bi bi-key-fill me-2 fs-5"></i> Connect Upstox Account</a>
+    </div>
+</body>
+
+</html>
