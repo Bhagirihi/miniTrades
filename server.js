@@ -123,8 +123,6 @@ function getISTDateTime() {
     .setZone("Asia/Kolkata")
     .toFormat("dd/MM/yyyy, hh:mm:ss a");
 }
-  }
-}
 
 let lastEodDumpDate = null;
 function saveEodPaperTradeDump() {
