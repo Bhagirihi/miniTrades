@@ -101,6 +101,69 @@ function savePaperState() {
   );
 }
 
+function getISTDateTime() {
+  return new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+}
+
+// Add day-wise CSV logging for paper trades
+function saveClosedHoldingToDayCSV(holding) {
+  const now = new Date();
+  const istDate = new Date(
+    now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
+  );
+  const dateStr = `${istDate.getFullYear()}-${String(istDate.getMonth() + 1).padStart(2, "0")}-${String(istDate.getDate()).padStart(2, "0")}`;
+
+  const historyDir = path.join(DATA_DIR, "history");
+  if (!fs.existsSync(historyDir)) {
+    fs.mkdirSync(historyDir, { recursive: true });
+  }
+  const filePath = path.join(historyDir, `${dateStr}.csv`);
+
+  const headers =
+    "SYMBOL,QTY,AVG BUY,BUY TIME,LTP / EXIT,EXIT TIME,P&L,STATUS\n";
+  const displayPrice = holding.exitPrice || holding.ltp;
+  const pnl = holding.pnl || 0;
+
+  const row = `"${holding.symbol}",${holding.qty},${holding.avg.toFixed(2)},"${holding.buyTime || "--"}",${displayPrice.toFixed(2)},"${holding.exitTime || "--"}",${pnl.toFixed(2)},"${holding.status}"\n`;
+
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, headers + row);
+  } else {
+    fs.appendFileSync(filePath, row);
+  }
+}
+
+let lastEodDumpDate = null;
+function saveEodPaperTradeDump() {
+  const now = new Date();
+  const istDate = new Date(
+    now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
+  );
+
+  const yyyy = istDate.getFullYear();
+  const mm = String(istDate.getMonth() + 1).padStart(2, "0");
+  const dd = String(istDate.getDate()).padStart(2, "0");
+  const hh = String(istDate.getHours()).padStart(2, "0");
+  const min = String(istDate.getMinutes()).padStart(2, "0");
+  const ss = String(istDate.getSeconds()).padStart(2, "0");
+
+  const datetimeStr = `${yyyy}-${mm}-${dd}_${hh}-${min}-${ss}`;
+  const historyDir = path.join(DATA_DIR, "history");
+  if (!fs.existsSync(historyDir)) fs.mkdirSync(historyDir, { recursive: true });
+  const filePath = path.join(historyDir, `paperTrade_${datetimeStr}.csv`);
+
+  const headers =
+    "SYMBOL,QTY,AVG BUY,BUY TIME,LTP / EXIT,EXIT TIME,P&L,STATUS\n";
+  const rows = paperHoldings
+    .map((h) => {
+      const displayPrice = h.exitPrice || h.ltp;
+      const pnl = h.pnl || h.qty * h.ltp - h.qty * h.avg;
+      return `"${h.symbol}",${h.qty},${h.avg.toFixed(2)},"${h.buyTime || "--"}",${displayPrice.toFixed(2)},"${h.exitTime || "--"}",${pnl.toFixed(2)},"${h.status}"`;
+    })
+    .join("\n");
+  fs.writeFileSync(filePath, headers + rows);
+}
+
 // --- STRATEGY LOGIC ---
 function analyzeMarket(prices) {
   if (prices.length < 50) return { signal: "SCANNING", color: "text-gray" };
@@ -360,6 +423,74 @@ app.post("/api/paper-reset", (req, res) => {
   res.json({ status: "success" });
 });
 
+app.get("/api/paper-history/days", (req, res) => {
+  const historyDir = path.join(DATA_DIR, "history");
+  if (!fs.existsSync(historyDir)) {
+    return res.json([]);
+  }
+  try {
+    const files = fs.readdirSync(historyDir).filter((f) => f.endsWith(".csv"));
+    const days = files.map((f) => f.replace(".csv", ""));
+    // Sort dates in descending order (newest first)
+    res.json(days.sort().reverse());
+  } catch (err) {
+    res.json([]);
+  }
+});
+
+app.get("/api/paper-history/download/:day", (req, res) => {
+  const { day } = req.params;
+  const filePath = path.join(DATA_DIR, "history", `${day}.csv`);
+  if (fs.existsSync(filePath)) {
+    res.download(filePath);
+  } else {
+    res.status(404).send("File not found");
+  }
+});
+
+app.get("/api/paper-history/view/:day", (req, res) => {
+  const { day } = req.params;
+  const filePath = path.join(DATA_DIR, "history", `${day}.csv`);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "File not found" });
+  }
+
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    const lines = content.trim().split("\n");
+    if (lines.length <= 1) return res.json([]);
+
+    const data = lines.slice(1).map((line) => {
+      const values = [];
+      let inQuotes = false;
+      let currentVal = "";
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        if (char === '"') inQuotes = !inQuotes;
+        else if (char === "," && !inQuotes) {
+          values.push(currentVal);
+          currentVal = "";
+        } else currentVal += char;
+      }
+      values.push(currentVal);
+
+      return {
+        symbol: (values[0] || "").replace(/^"|"$/g, ""),
+        qty: parseInt(values[1] || 0, 10),
+        avg: parseFloat(values[2] || 0),
+        buyTime: (values[3] || "").replace(/^"|"$/g, ""),
+        exitPrice: parseFloat(values[4] || 0),
+        exitTime: (values[5] || "").replace(/^"|"$/g, ""),
+        pnl: parseFloat(values[6] || 0),
+        status: (values[7] || "").replace(/^"|"$/g, ""),
+      };
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to parse CSV" });
+  }
+});
+
 app.post("/api/algo-toggle", (req, res) => {
   isAlgoTradeActive = !isAlgoTradeActive;
   res.json({ active: isAlgoTradeActive });
@@ -449,10 +580,10 @@ io.on("connection", (socket) => {
           exists.status = "SQUARE OFF";
           exists.exitPrice = stock.ltp;
           exists.pnl = pnl;
-          exists.exitTime = new Date().toLocaleTimeString();
+          exists.exitTime = getISTDateTime();
 
           paperLogs.unshift({
-            time: new Date().toLocaleTimeString(),
+            time: getISTDateTime(),
             action: "SQUARE OFF",
             symbol: stock.symbol,
             qty: exists.qty,
@@ -461,6 +592,7 @@ io.on("connection", (socket) => {
           });
           paperStateChanged = true;
           totalPaperTrades++;
+          saveClosedHoldingToDayCSV(exists);
           return; // Exit iteration
         }
 
@@ -490,10 +622,10 @@ io.on("connection", (socket) => {
             exists.status = closeReason;
             exists.exitPrice = stock.ltp;
             exists.pnl = pnl;
-            exists.exitTime = new Date().toLocaleTimeString();
+            exists.exitTime = getISTDateTime();
 
             paperLogs.unshift({
-              time: new Date().toLocaleTimeString(),
+              time: getISTDateTime(),
               action: closeReason,
               symbol: stock.symbol,
               qty: exists.qty,
@@ -502,6 +634,7 @@ io.on("connection", (socket) => {
             });
             paperStateChanged = true;
             totalPaperTrades++;
+            saveClosedHoldingToDayCSV(exists);
             return; // Exit iteration
           }
         }
@@ -536,11 +669,11 @@ io.on("connection", (socket) => {
                     ltp: stock.ltp,
                     highPrice: stock.ltp,
                     status: "ACTIVE",
-                    buyTime: new Date().toLocaleTimeString(),
+                    buyTime: getISTDateTime(),
                   });
                 }
                 paperLogs.unshift({
-                  time: new Date().toLocaleTimeString(),
+                  time: getISTDateTime(),
                   action: "BUY",
                   symbol: stock.symbol,
                   qty,
@@ -563,10 +696,10 @@ io.on("connection", (socket) => {
             exists.status = "SELL";
             exists.exitPrice = stock.ltp;
             exists.pnl = pnl;
-            exists.exitTime = new Date().toLocaleTimeString();
+            exists.exitTime = getISTDateTime();
 
             paperLogs.unshift({
-              time: new Date().toLocaleTimeString(),
+              time: getISTDateTime(),
               action: "SELL",
               symbol: stock.symbol,
               qty: exists.qty,
@@ -575,6 +708,7 @@ io.on("connection", (socket) => {
             });
             paperStateChanged = true;
             totalPaperTrades++;
+            saveClosedHoldingToDayCSV(exists);
           }
         }
       });
@@ -588,6 +722,19 @@ io.on("connection", (socket) => {
         paperHoldings = [...active, ...closed]; // Clean old history to save memory
       }
       if (paperStateChanged) savePaperState();
+    }
+
+    // --- EOD PAPER TRADE DUMP ---
+    const nowDump = new Date();
+    const istDumpDate = new Date(
+      nowDump.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
+    );
+    if (istDumpDate.getHours() === 15 && istDumpDate.getMinutes() >= 30) {
+      const todayStr = `${istDumpDate.getFullYear()}-${istDumpDate.getMonth()}-${istDumpDate.getDate()}`;
+      if (lastEodDumpDate !== todayStr && paperHoldings.length > 0) {
+        saveEodPaperTradeDump();
+        lastEodDumpDate = todayStr;
+      }
     }
 
     // --- LIVE ALGO TRADER LOGIC ---
