@@ -537,7 +537,11 @@ io.on("connection", (socket) => {
     let dataToProcess = [];
 
     if (myPortfolio.length > 0) {
-      // Use the actual static Upstox portfolio data without simulation
+      // Update technical history with the actual real-time LTP from WebSocket
+      myPortfolio.forEach((stock) => {
+        stock.history.shift();
+        stock.history.push(stock.ltp);
+      });
       dataToProcess = myPortfolio;
     }
 
@@ -551,19 +555,23 @@ io.on("connection", (socket) => {
       };
     });
 
+    // --- MARKET TIME MANAGEMENT (IST) ---
+    const now = new Date();
+    const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+    const istDate = new Date(istString);
+    const hours = istDate.getHours();
+    const minutes = istDate.getMinutes();
+
+    // Market Hours: 9:30 AM to 3:30 PM
+    const isMarketOpen =
+      (hours > 9 || (hours === 9 && minutes >= 30)) &&
+      (hours < 15 || (hours === 15 && minutes <= 30));
+    // Auto Square-off at 3:15 PM to avoid Upstox Intraday auto-square off penalties
+    const isSquareOffTime = (hours === 15 && minutes >= 15) || hours > 15;
+
     // --- AUTO PAPER TRADER LOGIC ---
     let paperStateChanged = false;
     if (isAutoPaperTradeActive) {
-      const now = new Date();
-      // Force the time evaluation to use Indian Standard Time (IST)
-      const istString = now.toLocaleString("en-US", {
-        timeZone: "Asia/Kolkata",
-      });
-      const istDate = new Date(istString);
-      const hours = istDate.getHours();
-      const minutes = istDate.getMinutes();
-      const isSquareOffTime = (hours === 15 && minutes >= 25) || hours > 15;
-
       processed.forEach((stock) => {
         const exists = paperHoldings.find(
           (h) => h.symbol === stock.symbol && h.status === "ACTIVE",
@@ -640,7 +648,11 @@ io.on("connection", (socket) => {
         }
 
         // 2. Standard Strategy Signals
-        if (stock.analysis.signal === "STRONG BUY" && !isSquareOffTime) {
+        if (
+          stock.analysis.signal === "STRONG BUY" &&
+          isMarketOpen &&
+          !isSquareOffTime
+        ) {
           // Buy if it's new, OR average down if price dropped at least 1% below current average
           if (!exists || stock.ltp < exists.avg * 0.99) {
             const riskAmount = paperCash * 0.1; // Risk 10% of available cash per trade
@@ -685,7 +697,11 @@ io.on("connection", (socket) => {
               }
             }
           }
-        } else if (stock.analysis.signal === "STRONG SELL") {
+        } else if (
+          stock.analysis.signal === "STRONG SELL" &&
+          isMarketOpen &&
+          !isSquareOffTime
+        ) {
           if (exists) {
             const revenue = exists.qty * stock.ltp;
             const brokerage = Math.min(20, revenue * 0.0005);
@@ -739,14 +755,6 @@ io.on("connection", (socket) => {
 
     // --- LIVE ALGO TRADER LOGIC ---
     if (isAlgoTradeActive && process.env.ACCESS_TOKEN) {
-      const now = new Date();
-      const istDate = new Date(
-        now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
-      );
-      const isSquareOffTime =
-        (istDate.getHours() === 15 && istDate.getMinutes() >= 15) ||
-        istDate.getHours() > 15; // 3:15 PM Square-off
-
       for (const stock of processed) {
         if (pendingOrders.has(stock.symbol)) continue; // Lock prevents rapid-fire duplicate orders
 
@@ -784,7 +792,11 @@ io.on("connection", (socket) => {
               pendingOrders.delete(stock.symbol);
             });
           }
-        } else if (stock.analysis.signal === "STRONG BUY" && !isSquareOffTime) {
+        } else if (
+          stock.analysis.signal === "STRONG BUY" &&
+          isMarketOpen &&
+          !isSquareOffTime
+        ) {
           const qty = Math.floor(ALGO_RISK_PER_TRADE / stock.ltp);
           if (qty > 0) {
             pendingOrders.add(stock.symbol);
