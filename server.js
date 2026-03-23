@@ -6,6 +6,9 @@ const { SMA, SD, EMA, RSI, MACD } = require("technicalindicators");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const { DateTime } = require("luxon");
+const WebSocket = require("ws");
+const protobuf = require("protobufjs");
 
 const app = express();
 const server = http.createServer(app);
@@ -29,6 +32,20 @@ let isAlgoTradeActive = false;
 let algoHoldings = []; // Tracks only what the bot buys
 let pendingOrders = new Set(); // Prevents duplicate order spamming
 const ALGO_RISK_PER_TRADE = 5000; // Maximum real ₹ to risk per trade
+
+// --- LIVE DATA FEED STATE ---
+let marketWs = null;
+let protobufRoot = null;
+
+const PROTO_PATH = path.join(__dirname, "MarketDataFeed.proto");
+if (fs.existsSync(PROTO_PATH)) {
+  protobuf.load(PROTO_PATH, (err, root) => {
+    if (!err) {
+      protobufRoot = root;
+      console.log("✅ Upstox Protobuf schema loaded for Live WebSockets.");
+    }
+  });
+}
 
 let DATA_DIR = process.env.DATA_DIR || __dirname;
 
@@ -102,52 +119,17 @@ function savePaperState() {
 }
 
 function getISTDateTime() {
-  return new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+  return DateTime.now()
+    .setZone("Asia/Kolkata")
+    .toFormat("dd/MM/yyyy, hh:mm:ss a");
 }
-
-// Add day-wise CSV logging for paper trades
-function saveClosedHoldingToDayCSV(holding) {
-  const now = new Date();
-  const istDate = new Date(
-    now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
-  );
-  const dateStr = `${istDate.getFullYear()}-${String(istDate.getMonth() + 1).padStart(2, "0")}-${String(istDate.getDate()).padStart(2, "0")}`;
-
-  const historyDir = path.join(DATA_DIR, "history");
-  if (!fs.existsSync(historyDir)) {
-    fs.mkdirSync(historyDir, { recursive: true });
-  }
-  const filePath = path.join(historyDir, `${dateStr}.csv`);
-
-  const headers =
-    "SYMBOL,QTY,AVG BUY,BUY TIME,LTP / EXIT,EXIT TIME,P&L,STATUS\n";
-  const displayPrice = holding.exitPrice || holding.ltp;
-  const pnl = holding.pnl || 0;
-
-  const row = `"${holding.symbol}",${holding.qty},${holding.avg.toFixed(2)},"${holding.buyTime || "--"}",${displayPrice.toFixed(2)},"${holding.exitTime || "--"}",${pnl.toFixed(2)},"${holding.status}"\n`;
-
-  if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, headers + row);
-  } else {
-    fs.appendFileSync(filePath, row);
   }
 }
 
 let lastEodDumpDate = null;
 function saveEodPaperTradeDump() {
-  const now = new Date();
-  const istDate = new Date(
-    now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
-  );
-
-  const yyyy = istDate.getFullYear();
-  const mm = String(istDate.getMonth() + 1).padStart(2, "0");
-  const dd = String(istDate.getDate()).padStart(2, "0");
-  const hh = String(istDate.getHours()).padStart(2, "0");
-  const min = String(istDate.getMinutes()).padStart(2, "0");
-  const ss = String(istDate.getSeconds()).padStart(2, "0");
-
-  const datetimeStr = `${yyyy}-${mm}-${dd}_${hh}-${min}-${ss}`;
+  const istDate = DateTime.now().setZone("Asia/Kolkata");
+  const datetimeStr = istDate.toFormat("yyyy-MM-dd_HH-mm-ss");
   const historyDir = path.join(DATA_DIR, "history");
   if (!fs.existsSync(historyDir)) fs.mkdirSync(historyDir, { recursive: true });
   const filePath = path.join(historyDir, `paperTrade_${datetimeStr}.csv`);
@@ -283,6 +265,77 @@ async function updateFunds() {
 }
 
 // --- UPSTOX API HANDLERS ---
+async function initMarketFeed() {
+  if (!process.env.ACCESS_TOKEN) return;
+  if (!protobufRoot) {
+    console.warn(
+      "⚠️ MarketDataFeed.proto not found. Skipping live WebSockets.",
+    );
+    return;
+  }
+
+  try {
+    const authRes = await axios.get(
+      "https://api.upstox.com/v2/feed/market-data-feed/authorize",
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+          Accept: "application/json",
+        },
+      },
+    );
+
+    const wsUrl = authRes.data.data.authorized_redirect_uri;
+    if (marketWs) marketWs.close(); // Close existing connection if any
+
+    marketWs = new WebSocket(wsUrl);
+
+    marketWs.on("open", () => {
+      console.log("🟢 Live Market Data WebSocket Connected!");
+      const instrumentKeys = myPortfolio.map((s) => s.instrument_token);
+
+      if (instrumentKeys.length > 0) {
+        const subRequest = {
+          guid: "trade_bot_" + Date.now(),
+          method: "sub",
+          data: { mode: "full", instrumentKeys: instrumentKeys },
+        };
+        marketWs.send(Buffer.from(JSON.stringify(subRequest)));
+      }
+    });
+
+    marketWs.on("message", (data) => {
+      try {
+        const FeedResponse = protobufRoot.lookupType(
+          "com.upstox.marketdatafeeder.rpc.proto.FeedResponse",
+        );
+        const decoded = FeedResponse.decode(data);
+        const feeds = decoded.feeds || {};
+
+        for (const [instrument, feed] of Object.entries(feeds)) {
+          // Extract exact Last Traded Price (LTP) from the Protobuf Full Feed
+          if (feed.ff && feed.ff.marketFF && feed.ff.marketFF.ltpc) {
+            const ltp = feed.ff.marketFF.ltpc.ltp;
+            const stock = myPortfolio.find(
+              (s) => s.instrument_token === instrument,
+            );
+            if (stock && ltp) stock.ltp = ltp; // Instantly patch the live memory
+          }
+        }
+      } catch (err) {
+        /* Silently ignore malformed binary packets */
+      }
+    });
+
+    marketWs.on("close", () => {
+      console.log("🔴 Market WebSocket closed. Reconnecting in 5s...");
+      setTimeout(initMarketFeed, 5000);
+    });
+  } catch (error) {
+    console.error("❌ Failed to authorize Market Feed:", error.message);
+  }
+}
+
 async function updatePortfolio() {
   if (!process.env.ACCESS_TOKEN) return;
   try {
@@ -310,6 +363,7 @@ async function updatePortfolio() {
         ),
       }));
       console.log(`✅ Loaded ${myPortfolio.length} real holdings from Upstox!`);
+      initMarketFeed(); // Subscribe to real-time feed for these holdings
     }
   } catch (error) {
     console.error("❌ Failed to fetch Upstox holdings:", error.message);
@@ -531,68 +585,110 @@ async function executeLiveAlgoOrder(symbol, qty, side) {
 
 // --- REAL-TIME EMITTER ---
 let tickCounter = 0; // Tracks time for smooth price simulation
-io.on("connection", (socket) => {
-  setInterval(async () => {
-    tickCounter++;
-    let dataToProcess = [];
+setInterval(async () => {
+  tickCounter++;
 
-    if (myPortfolio.length > 0) {
+  // --- MARKET TIME MANAGEMENT (IST) ---
+  const istDate = DateTime.now().setZone("Asia/Kolkata");
+  const hours = istDate.hour;
+  const minutes = istDate.minute;
+
+  // Scanner Display Window: 9:00 AM to 3:30 PM
+  const isDisplayWindow =
+    hours >= 9 && (hours < 15 || (hours === 15 && minutes <= 30));
+
+  let dataToProcess = [];
+
+  if (myPortfolio.length > 0) {
+    if (isDisplayWindow) {
       // Update technical history with the actual real-time LTP from WebSocket
       myPortfolio.forEach((stock) => {
         stock.history.shift();
         stock.history.push(stock.ltp);
       });
-      dataToProcess = myPortfolio;
     }
+    dataToProcess = myPortfolio;
+  }
 
-    const processed = dataToProcess.map((s) => {
-      const isIndex = s.symbol.includes("NIFTY");
-      return {
-        ...s,
-        analysis: isIndex
-          ? analyzeIntradayIndices(s.history)
-          : analyzeMarket(s.history),
-      };
-    });
+  const processed = dataToProcess.map((s) => {
+    const isIndex = s.symbol.includes("NIFTY");
+    return {
+      ...s,
+      analysis: isIndex
+        ? analyzeIntradayIndices(s.history)
+        : analyzeMarket(s.history),
+    };
+  });
 
-    // --- MARKET TIME MANAGEMENT (IST) ---
-    const now = new Date();
-    const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
-    const istDate = new Date(istString);
-    const hours = istDate.getHours();
-    const minutes = istDate.getMinutes();
+  // Market Hours: 9:30 AM to 3:30 PM
+  const isMarketOpen =
+    (hours > 9 || (hours === 9 && minutes >= 30)) &&
+    (hours < 15 || (hours === 15 && minutes <= 30));
+  // Auto Square-off at 3:15 PM to avoid Upstox Intraday auto-square off penalties
+  const isSquareOffTime = (hours === 15 && minutes >= 15) || hours > 15;
 
-    // Market Hours: 9:30 AM to 3:30 PM
-    const isMarketOpen =
-      (hours > 9 || (hours === 9 && minutes >= 30)) &&
-      (hours < 15 || (hours === 15 && minutes <= 30));
-    // Auto Square-off at 3:15 PM to avoid Upstox Intraday auto-square off penalties
-    const isSquareOffTime = (hours === 15 && minutes >= 15) || hours > 15;
+  // --- AUTO PAPER TRADER LOGIC ---
+  let paperStateChanged = false;
+  if (isAutoPaperTradeActive) {
+    processed.forEach((stock) => {
+      const exists = paperHoldings.find(
+        (h) => h.symbol === stock.symbol && h.status === "ACTIVE",
+      );
 
-    // --- AUTO PAPER TRADER LOGIC ---
-    let paperStateChanged = false;
-    if (isAutoPaperTradeActive) {
-      processed.forEach((stock) => {
-        const exists = paperHoldings.find(
-          (h) => h.symbol === stock.symbol && h.status === "ACTIVE",
-        );
+      // 0. Auto Square-Off at 3:25 PM
+      if (exists && isSquareOffTime) {
+        const revenue = exists.qty * stock.ltp;
+        const brokerage = Math.min(20, revenue * 0.0005);
+        totalBrokerage += brokerage;
+        const pnl = revenue - exists.qty * exists.avg - brokerage;
+        paperCash += revenue - brokerage;
 
-        // 0. Auto Square-Off at 3:25 PM
-        if (exists && isSquareOffTime) {
+        exists.status = "SQUARE OFF";
+        exists.exitPrice = stock.ltp;
+        exists.pnl = pnl;
+        exists.exitTime = getISTDateTime();
+
+        paperLogs.unshift({
+          time: getISTDateTime(),
+          action: "SQUARE OFF",
+          symbol: stock.symbol,
+          qty: exists.qty,
+          price: stock.ltp,
+          pnl,
+        });
+        paperStateChanged = true;
+        totalPaperTrades++;
+        saveClosedHoldingToDayCSV(exists);
+        return; // Exit iteration
+      }
+
+      // 1. Check Stop-Loss, Trailing Stop-Loss (0.5% from High), and Take-Profit (1.5%)
+      if (exists) {
+        exists.highPrice = Math.max(exists.highPrice || exists.avg, stock.ltp);
+        const pnlPct = (stock.ltp - exists.avg) / exists.avg;
+        const dropFromHigh = (exists.highPrice - stock.ltp) / exists.highPrice;
+
+        let closeReason = null;
+        if (pnlPct >= 0.025) closeReason = "TAKE PROFIT";
+        else if (pnlPct <= -0.015) closeReason = "STOP LOSS";
+        else if (pnlPct > 0 && dropFromHigh >= 0.01)
+          closeReason = "TRAILING STOP";
+
+        if (closeReason) {
           const revenue = exists.qty * stock.ltp;
-          const brokerage = Math.min(20, revenue * 0.0005);
+          const brokerage = Math.min(20, revenue * 0.0005); // Upstox Intraday Brokerage Calc
           totalBrokerage += brokerage;
           const pnl = revenue - exists.qty * exists.avg - brokerage;
           paperCash += revenue - brokerage;
 
-          exists.status = "SQUARE OFF";
+          exists.status = closeReason;
           exists.exitPrice = stock.ltp;
           exists.pnl = pnl;
           exists.exitTime = getISTDateTime();
 
           paperLogs.unshift({
             time: getISTDateTime(),
-            action: "SQUARE OFF",
+            action: closeReason,
             symbol: stock.symbol,
             qty: exists.qty,
             price: stock.ltp,
@@ -603,238 +699,192 @@ io.on("connection", (socket) => {
           saveClosedHoldingToDayCSV(exists);
           return; // Exit iteration
         }
-
-        // 1. Check Stop-Loss, Trailing Stop-Loss (0.5% from High), and Take-Profit (1.5%)
-        if (exists) {
-          exists.highPrice = Math.max(
-            exists.highPrice || exists.avg,
-            stock.ltp,
-          );
-          const pnlPct = (stock.ltp - exists.avg) / exists.avg;
-          const dropFromHigh =
-            (exists.highPrice - stock.ltp) / exists.highPrice;
-
-          let closeReason = null;
-          if (pnlPct >= 0.025) closeReason = "TAKE PROFIT";
-          else if (pnlPct <= -0.015) closeReason = "STOP LOSS";
-          else if (pnlPct > 0 && dropFromHigh >= 0.01)
-            closeReason = "TRAILING STOP";
-
-          if (closeReason) {
-            const revenue = exists.qty * stock.ltp;
-            const brokerage = Math.min(20, revenue * 0.0005); // Upstox Intraday Brokerage Calc
-            totalBrokerage += brokerage;
-            const pnl = revenue - exists.qty * exists.avg - brokerage;
-            paperCash += revenue - brokerage;
-
-            exists.status = closeReason;
-            exists.exitPrice = stock.ltp;
-            exists.pnl = pnl;
-            exists.exitTime = getISTDateTime();
-
-            paperLogs.unshift({
-              time: getISTDateTime(),
-              action: closeReason,
-              symbol: stock.symbol,
-              qty: exists.qty,
-              price: stock.ltp,
-              pnl,
-            });
-            paperStateChanged = true;
-            totalPaperTrades++;
-            saveClosedHoldingToDayCSV(exists);
-            return; // Exit iteration
-          }
-        }
-
-        // 2. Standard Strategy Signals
-        if (
-          stock.analysis.signal === "STRONG BUY" &&
-          isMarketOpen &&
-          !isSquareOffTime
-        ) {
-          // Buy if it's new, OR average down if price dropped at least 1% below current average
-          if (!exists || stock.ltp < exists.avg * 0.99) {
-            const riskAmount = paperCash * 0.1; // Risk 10% of available cash per trade
-            if (riskAmount >= stock.ltp && stock.ltp > 0) {
-              const qty = Math.floor(riskAmount / stock.ltp);
-              if (qty > 0) {
-                const cost = qty * stock.ltp;
-                const brokerage = Math.min(20, cost * 0.0005);
-                totalBrokerage += brokerage;
-                paperCash -= cost + brokerage;
-
-                if (exists) {
-                  const totalCost = exists.qty * exists.avg + cost;
-                  exists.qty += qty;
-                  exists.avg = totalCost / exists.qty;
-                  exists.ltp = stock.ltp;
-                  exists.highPrice = Math.max(
-                    exists.highPrice || exists.avg,
-                    stock.ltp,
-                  );
-                } else {
-                  paperHoldings.unshift({
-                    symbol: stock.symbol,
-                    qty,
-                    avg: stock.ltp,
-                    ltp: stock.ltp,
-                    highPrice: stock.ltp,
-                    status: "ACTIVE",
-                    buyTime: getISTDateTime(),
-                  });
-                }
-                paperLogs.unshift({
-                  time: getISTDateTime(),
-                  action: "BUY",
-                  symbol: stock.symbol,
-                  qty,
-                  price: stock.ltp,
-                  pnl: 0,
-                });
-                paperStateChanged = true;
-                totalPaperTrades++;
-              }
-            }
-          }
-        } else if (
-          stock.analysis.signal === "STRONG SELL" &&
-          isMarketOpen &&
-          !isSquareOffTime
-        ) {
-          if (exists) {
-            const revenue = exists.qty * stock.ltp;
-            const brokerage = Math.min(20, revenue * 0.0005);
-            totalBrokerage += brokerage;
-            const pnl = revenue - exists.qty * exists.avg - brokerage;
-            paperCash += revenue - brokerage;
-
-            exists.status = "SELL";
-            exists.exitPrice = stock.ltp;
-            exists.pnl = pnl;
-            exists.exitTime = getISTDateTime();
-
-            paperLogs.unshift({
-              time: getISTDateTime(),
-              action: "SELL",
-              symbol: stock.symbol,
-              qty: exists.qty,
-              price: stock.ltp,
-              pnl,
-            });
-            paperStateChanged = true;
-            totalPaperTrades++;
-            saveClosedHoldingToDayCSV(exists);
-          }
-        }
-      });
-
-      if (paperLogs.length > 50) paperLogs = paperLogs.slice(0, 50); // Keep log short
-      if (paperHoldings.length > 50) {
-        const active = paperHoldings.filter((h) => h.status === "ACTIVE");
-        const closed = paperHoldings
-          .filter((h) => h.status !== "ACTIVE")
-          .slice(0, 50);
-        paperHoldings = [...active, ...closed]; // Clean old history to save memory
       }
-      if (paperStateChanged) savePaperState();
-    }
 
-    // --- EOD PAPER TRADE DUMP ---
-    const nowDump = new Date();
-    const istDumpDate = new Date(
-      nowDump.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
-    );
-    if (istDumpDate.getHours() === 15 && istDumpDate.getMinutes() >= 30) {
-      const todayStr = `${istDumpDate.getFullYear()}-${istDumpDate.getMonth()}-${istDumpDate.getDate()}`;
-      if (lastEodDumpDate !== todayStr && paperHoldings.length > 0) {
-        saveEodPaperTradeDump();
-        lastEodDumpDate = todayStr;
-      }
-    }
+      // 2. Standard Strategy Signals
+      if (
+        stock.analysis.signal === "STRONG BUY" &&
+        isMarketOpen &&
+        !isSquareOffTime
+      ) {
+        // Buy if it's new, OR average down if price dropped at least 1% below current average
+        if (!exists || stock.ltp < exists.avg * 0.99) {
+          const riskAmount = paperCash * 0.1; // Risk 10% of available cash per trade
+          if (riskAmount >= stock.ltp && stock.ltp > 0) {
+            const qty = Math.floor(riskAmount / stock.ltp);
+            if (qty > 0) {
+              const cost = qty * stock.ltp;
+              const brokerage = Math.min(20, cost * 0.0005);
+              totalBrokerage += brokerage;
+              paperCash -= cost + brokerage;
 
-    // --- LIVE ALGO TRADER LOGIC ---
-    if (isAlgoTradeActive && process.env.ACCESS_TOKEN) {
-      for (const stock of processed) {
-        if (pendingOrders.has(stock.symbol)) continue; // Lock prevents rapid-fire duplicate orders
-
-        const existsIndex = algoHoldings.findIndex(
-          (h) => h.symbol === stock.symbol,
-        );
-        const exists = algoHoldings[existsIndex];
-        const token = stock.instrument_token || stock.symbol;
-
-        // 0. Auto Square-Off or Safety Exits
-        if (exists) {
-          exists.highPrice = Math.max(
-            exists.highPrice || exists.avg,
-            stock.ltp,
-          );
-          const pnlPct = (stock.ltp - exists.avg) / exists.avg;
-          const dropFromHigh =
-            (exists.highPrice - stock.ltp) / exists.highPrice;
-
-          let shouldSell = isSquareOffTime; // Always sell at 3:15 PM
-          if (!shouldSell) {
-            if (pnlPct >= 0.025)
-              shouldSell = true; // Take Profit
-            else if (pnlPct <= -0.015)
-              shouldSell = true; // Stop Loss
-            else if (pnlPct > 0 && dropFromHigh >= 0.01)
-              shouldSell = true; // Trailing Stop
-            else if (stock.analysis.signal === "STRONG SELL") shouldSell = true; // Strategy
-          }
-
-          if (shouldSell) {
-            pendingOrders.add(stock.symbol);
-            executeLiveAlgoOrder(token, exists.qty, "SELL").then((success) => {
-              if (success) algoHoldings.splice(existsIndex, 1);
-              pendingOrders.delete(stock.symbol);
-            });
-          }
-        } else if (
-          stock.analysis.signal === "STRONG BUY" &&
-          isMarketOpen &&
-          !isSquareOffTime
-        ) {
-          const qty = Math.floor(ALGO_RISK_PER_TRADE / stock.ltp);
-          if (qty > 0) {
-            pendingOrders.add(stock.symbol);
-            executeLiveAlgoOrder(token, qty, "BUY").then((success) => {
-              if (success)
-                algoHoldings.push({
+              if (exists) {
+                const totalCost = exists.qty * exists.avg + cost;
+                exists.qty += qty;
+                exists.avg = totalCost / exists.qty;
+                exists.ltp = stock.ltp;
+                exists.highPrice = Math.max(
+                  exists.highPrice || exists.avg,
+                  stock.ltp,
+                );
+              } else {
+                paperHoldings.unshift({
                   symbol: stock.symbol,
                   qty,
                   avg: stock.ltp,
                   ltp: stock.ltp,
                   highPrice: stock.ltp,
+                  status: "ACTIVE",
+                  buyTime: getISTDateTime(),
                 });
-              pendingOrders.delete(stock.symbol);
-            });
+              }
+              paperLogs.unshift({
+                time: getISTDateTime(),
+                action: "BUY",
+                symbol: stock.symbol,
+                qty,
+                price: stock.ltp,
+                pnl: 0,
+              });
+              paperStateChanged = true;
+              totalPaperTrades++;
+            }
           }
+        }
+      } else if (
+        stock.analysis.signal === "STRONG SELL" &&
+        isMarketOpen &&
+        !isSquareOffTime
+      ) {
+        if (exists) {
+          const revenue = exists.qty * stock.ltp;
+          const brokerage = Math.min(20, revenue * 0.0005);
+          totalBrokerage += brokerage;
+          const pnl = revenue - exists.qty * exists.avg - brokerage;
+          paperCash += revenue - brokerage;
+
+          exists.status = "SELL";
+          exists.exitPrice = stock.ltp;
+          exists.pnl = pnl;
+          exists.exitTime = getISTDateTime();
+
+          paperLogs.unshift({
+            time: getISTDateTime(),
+            action: "SELL",
+            symbol: stock.symbol,
+            qty: exists.qty,
+            price: stock.ltp,
+            pnl,
+          });
+          paperStateChanged = true;
+          totalPaperTrades++;
+          saveClosedHoldingToDayCSV(exists);
+        }
+      }
+    });
+
+    if (paperLogs.length > 50) paperLogs = paperLogs.slice(0, 50); // Keep log short
+    if (paperHoldings.length > 50) {
+      const active = paperHoldings.filter((h) => h.status === "ACTIVE");
+      const closed = paperHoldings
+        .filter((h) => h.status !== "ACTIVE")
+        .slice(0, 50);
+      paperHoldings = [...active, ...closed]; // Clean old history to save memory
+    }
+    if (paperStateChanged) savePaperState();
+  }
+
+  // --- EOD PAPER TRADE DUMP ---
+  const istDumpDate = DateTime.now().setZone("Asia/Kolkata");
+  if (istDumpDate.hour === 15 && istDumpDate.minute >= 30) {
+    const todayStr = istDumpDate.toFormat("yyyy-MM-dd");
+    if (lastEodDumpDate !== todayStr && paperHoldings.length > 0) {
+      saveEodPaperTradeDump();
+      lastEodDumpDate = todayStr;
+    }
+  }
+
+  // --- LIVE ALGO TRADER LOGIC ---
+  if (isAlgoTradeActive && process.env.ACCESS_TOKEN) {
+    for (const stock of processed) {
+      if (pendingOrders.has(stock.symbol)) continue; // Lock prevents rapid-fire duplicate orders
+
+      const existsIndex = algoHoldings.findIndex(
+        (h) => h.symbol === stock.symbol,
+      );
+      const exists = algoHoldings[existsIndex];
+      const token = stock.instrument_token || stock.symbol;
+
+      // 0. Auto Square-Off or Safety Exits
+      if (exists) {
+        exists.highPrice = Math.max(exists.highPrice || exists.avg, stock.ltp);
+        const pnlPct = (stock.ltp - exists.avg) / exists.avg;
+        const dropFromHigh = (exists.highPrice - stock.ltp) / exists.highPrice;
+
+        let shouldSell = isSquareOffTime; // Always sell at 3:15 PM
+        if (!shouldSell) {
+          if (pnlPct >= 0.025)
+            shouldSell = true; // Take Profit
+          else if (pnlPct <= -0.015)
+            shouldSell = true; // Stop Loss
+          else if (pnlPct > 0 && dropFromHigh >= 0.01)
+            shouldSell = true; // Trailing Stop
+          else if (stock.analysis.signal === "STRONG SELL") shouldSell = true; // Strategy
+        }
+
+        if (shouldSell) {
+          pendingOrders.add(stock.symbol);
+          executeLiveAlgoOrder(token, exists.qty, "SELL").then((success) => {
+            if (success) algoHoldings.splice(existsIndex, 1);
+            pendingOrders.delete(stock.symbol);
+          });
+        }
+      } else if (
+        stock.analysis.signal === "STRONG BUY" &&
+        isMarketOpen &&
+        !isSquareOffTime
+      ) {
+        const qty = Math.floor(ALGO_RISK_PER_TRADE / stock.ltp);
+        if (qty > 0) {
+          pendingOrders.add(stock.symbol);
+          executeLiveAlgoOrder(token, qty, "BUY").then((success) => {
+            if (success)
+              algoHoldings.push({
+                symbol: stock.symbol,
+                qty,
+                avg: stock.ltp,
+                ltp: stock.ltp,
+                highPrice: stock.ltp,
+              });
+            pendingOrders.delete(stock.symbol);
+          });
         }
       }
     }
+  }
 
-    // Update live LTP for active paper holdings to calculate unrealized P&L
-    paperHoldings.forEach((ph) => {
-      if (ph.status === "ACTIVE") {
-        const live = processed.find((p) => p.symbol === ph.symbol);
-        if (live) ph.ltp = live.ltp;
-      }
-    });
+  // Update live LTP for active paper holdings to calculate unrealized P&L
+  paperHoldings.forEach((ph) => {
+    if (ph.status === "ACTIVE") {
+      const live = processed.find((p) => p.symbol === ph.symbol);
+      if (live) ph.ltp = live.ltp;
+    }
+  });
 
-    socket.emit("tick", processed);
-    socket.emit("upstox-funds", upstoxAvailableFunds);
-    socket.emit("paper-state", {
-      paperCash,
-      paperHoldings,
-      paperLogs,
-      isAutoPaperTradeActive,
-      totalPaperTrades,
-      totalBrokerage,
-    });
-  }, 1000);
+  io.emit("tick", processed);
+  io.emit("upstox-funds", upstoxAvailableFunds);
+  io.emit("paper-state", {
+    paperCash,
+    paperHoldings,
+    paperLogs,
+    isAutoPaperTradeActive,
+    totalPaperTrades,
+    totalBrokerage,
+  });
+}, 1000);
+
+io.on("connection", (socket) => {
+  console.log("💻 Client connected to Live Terminal UI");
 });
 
 // Fetch portfolio immediately on startup if we have a saved token

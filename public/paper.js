@@ -320,3 +320,57 @@ socket.on("paper-state", (data) => {
       .join("") ||
     '<li class="list-group-item bg-transparent text-muted text-center py-4 border-0">Awaiting automated bot trades...</li>';
 });
+
+// --- LIVE CLOCK WIDGET ---
+const clockWidget = document.createElement("div");
+clockWidget.className =
+  "position-fixed bottom-0 end-0 m-3 badge bg-dark border border-secondary p-2 fs-6 font-mono shadow text-white";
+clockWidget.style.zIndex = "9999";
+document.body.appendChild(clockWidget);
+
+let closedOverlay = null;
+
+// Update the clock every second in IST
+setInterval(() => {
+  const now = new Date();
+  clockWidget.innerHTML = `<i class="bi bi-clock me-2 text-info"></i>${now.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })} IST`;
+
+  const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+  const istDate = new Date(istString);
+  const hours = istDate.getHours();
+  const minutes = istDate.getMinutes();
+  const day = istDate.getDay();
+
+  // Check if weekend (0 = Sun, 6 = Sat) or outside 9:00 AM - 3:30 PM (IST)
+  const isMarketClosed =
+    day === 0 ||
+    day === 6 ||
+    hours < 9 ||
+    (hours === 15 && minutes > 30) ||
+    hours > 15;
+
+  if (isMarketClosed) {
+    if (!closedOverlay) {
+      closedOverlay = document.createElement("div");
+      closedOverlay.id = "market-closed-overlay";
+      closedOverlay.className =
+        "position-fixed top-0 start-0 w-100 d-flex flex-column align-items-center";
+      closedOverlay.style.zIndex = "9998"; // Keep beneath the 9999 clock widget
+      closedOverlay.style.pointerEvents = "none"; // Allows users to still click and scroll through the overlay
+
+      const banner = document.createElement("div");
+      banner.className =
+        "w-100 bg-danger text-white text-center fw-bold py-2 fs-5 shadow-lg";
+      banner.innerHTML =
+        "<i class='bi bi-moon-stars-fill me-2'></i> MARKET CLOSE";
+
+      closedOverlay.appendChild(banner);
+      document.body.appendChild(closedOverlay);
+    }
+  } else {
+    if (closedOverlay) {
+      closedOverlay.remove();
+      closedOverlay = null;
+    }
+  }
+}, 1000);
