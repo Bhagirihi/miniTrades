@@ -154,7 +154,7 @@ function analyzeMarket(prices) {
   const sma50 = SMA.calculate({ period: 50, values: prices }).pop();
   const lastPrice = prices[prices.length - 1];
 
-  const zScore = (lastPrice - sma20) / sd;
+  const zScore = sd === 0 ? 0 : (lastPrice - sma20) / sd; // Prevent NaN if price is flat
 
   // High Probability Mean Reversion Thresholds
   if (zScore < -2.5 && lastPrice > sma50)
@@ -591,14 +591,25 @@ setInterval(async () => {
   const hours = istDate.hour;
   const minutes = istDate.minute;
 
-  // Scanner Display Window: 9:00 AM to 3:30 PM
-  const isDisplayWindow =
-    hours >= 9 && (hours < 15 || (hours === 15 && minutes <= 30));
+  // Check if we have an active live market connection
+  const isLiveFeedActive = marketWs && marketWs.readyState === WebSocket.OPEN;
+
+  // Scanner Display Window: 9:00 AM to 3:30 PM (Enforce only if live feed is active)
+  const isDisplayWindow = isLiveFeedActive
+    ? hours >= 9 && (hours < 15 || (hours === 15 && minutes <= 30))
+    : true; // If testing offline, always allow the scanner to run for simulations
 
   let dataToProcess = [];
 
   if (myPortfolio.length > 0) {
     if (isDisplayWindow) {
+      // Fallback: If live WebSocket feed is unavailable, simulate minor fluctuations for testing
+      if (!isLiveFeedActive) {
+        myPortfolio.forEach((stock) => {
+          stock.ltp = Math.max(0, stock.ltp + (Math.random() * 2 - 1)); // Random +/- 1 price wiggle
+        });
+      }
+
       // Update technical history with the actual real-time LTP from WebSocket
       myPortfolio.forEach((stock) => {
         stock.history.shift();
@@ -656,7 +667,6 @@ setInterval(async () => {
         });
         paperStateChanged = true;
         totalPaperTrades++;
-        saveClosedHoldingToDayCSV(exists);
         return; // Exit iteration
       }
 
@@ -694,7 +704,6 @@ setInterval(async () => {
           });
           paperStateChanged = true;
           totalPaperTrades++;
-          saveClosedHoldingToDayCSV(exists);
           return; // Exit iteration
         }
       }
@@ -776,7 +785,6 @@ setInterval(async () => {
           });
           paperStateChanged = true;
           totalPaperTrades++;
-          saveClosedHoldingToDayCSV(exists);
         }
       }
     });

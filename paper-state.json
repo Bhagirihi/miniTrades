@@ -2,7 +2,7 @@
   "paperCash": 100000,
   "paperHoldings": [],
   "paperLogs": [],
-  "isAutoPaperTradeActive": false,
+  "isAutoPaperTradeActive": true,
   "totalPaperTrades": 0,
   "totalBrokerage": 0
 }
